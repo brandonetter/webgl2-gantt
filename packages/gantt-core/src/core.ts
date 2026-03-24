@@ -789,7 +789,7 @@ export function taskWorldRect(
   return {
     x: task.start,
     y: rowY + (rowPitch - barHeight) * 0.5,
-    w: task.milestone ? Math.max(1, task.end - task.start) : Math.max(2, task.end - task.start),
+    w: Math.max(1, task.end - task.start),
     h: task.milestone ? Math.min(barHeight, 12) : barHeight,
   };
 }

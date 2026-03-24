@@ -229,7 +229,7 @@ describe('frame assembly', () => {
     expect(frame.dependencyPaths.map((path) => path.id).sort()).toEqual(['a->c', 'b->c']);
   });
 
-  it('keeps one-day task connectors and picking aligned with the rendered min width', () => {
+  it('renders one-day tasks at their true width and keeps picking aligned', () => {
     const atlas = makeTestAtlas();
     const layout = new TextLayoutEngine(atlas);
     const scene = {
@@ -275,14 +275,14 @@ describe('frame assembly', () => {
       },
     );
 
-    expect(frame.dependencyPaths[0]?.segments[0]?.x1).toBeCloseTo(4);
+    expect(frame.dependencyPaths[0]?.segments[0]?.x1).toBeCloseTo(3.5);
 
-    const pickedOnRightHalf = pickTaskAtPoint(scene, index, camera, 495, 15, {
+    const pickedNearRightEdge = pickTaskAtPoint(scene, index, camera, 399, 15, {
       rowPitch: 30,
       barHeight: 16,
     });
 
-    expect(pickedOnRightHalf?.id).toBe('a');
+    expect(pickedNearRightEdge?.id).toBe('a');
   });
 
   it('applies display styling overrides to grid, task text, and dependencies', () => {
