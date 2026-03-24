@@ -145,8 +145,6 @@ const BAR_PALETTE: Array<[number, number, number]> = [
 
 const MIN_ZOOM = 0.15;
 const MAX_ZOOM_X = 768;
-const MAX_ZOOM_Y = 2.15;
-
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
@@ -333,11 +331,9 @@ export function zoomCameraAt(
   anchorY: number,
 ): CameraState {
   const nextZoomX = clamp(camera.zoomX * zoomFactor, MIN_ZOOM, MAX_ZOOM_X);
-  const zoomingOut = zoomFactor < 1;
-  const wasVerticallyClamped = camera.zoomY >= MAX_ZOOM_Y - 0.0001 && camera.zoomX > camera.zoomY;
-  const nextZoomY = zoomingOut && wasVerticallyClamped
-    ? clamp(Math.min(nextZoomX, MAX_ZOOM_Y), MIN_ZOOM, MAX_ZOOM_Y)
-    : clamp(camera.zoomY * zoomFactor, MIN_ZOOM, MAX_ZOOM_Y);
+  // The chart body pans in world-y, but the header is a fixed screen-space band.
+  // Keeping vertical zoom fixed avoids a drifting gap between the header and rows.
+  const nextZoomY = 1;
   const worldX = camera.scrollX + anchorX / camera.zoomX;
   const worldY = camera.scrollY + anchorY / camera.zoomY;
 

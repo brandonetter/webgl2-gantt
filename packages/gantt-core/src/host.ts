@@ -262,6 +262,20 @@ function resolvePresetZoomX(boundsWidthDays: number, availableWidthPx: number, v
   return availableWidthPx / Math.max(1, boundsWidthDays);
 }
 
+function createHostCameraState(
+  viewportWidth: number,
+  viewportHeight: number,
+  headerHeight: number,
+  timelineStart: number,
+  hasTasks: boolean,
+): CameraState {
+  return {
+    ...createCamera(viewportWidth, viewportHeight),
+    scrollX: hasTasks ? timelineStart - 21 : 0,
+    scrollY: -headerHeight,
+  };
+}
+
 function pickSelectedTask(
   scene: GanttScene,
   index: TaskIndex,
@@ -357,10 +371,7 @@ class GanttHostImpl implements GanttHostController {
 
     this.gl = gl;
     this.renderer = new GanttRenderer(gl);
-    this.camera = {
-      ...createCamera(1280, 720),
-      scrollY: -this.config.render.headerHeight,
-    };
+    this.camera = createHostCameraState(1280, 720, this.config.render.headerHeight, 0, false);
 
     this.pluginRuntime = new PluginRuntime({
       config: this.config,
@@ -399,12 +410,13 @@ class GanttHostImpl implements GanttHostController {
     this.index = buildTaskIndex(this.scene.tasks);
     this.dependentsById = this.buildDependentsMap(this.scene.tasks);
 
-    if (this.scene.tasks.length > 0) {
-      this.camera = {
-        ...this.camera,
-        scrollX: this.scene.timelineStart - 21,
-      };
-    }
+    this.camera = createHostCameraState(
+      this.camera.viewportWidth,
+      this.camera.viewportHeight,
+      this.config.render.headerHeight,
+      this.scene.timelineStart,
+      this.scene.tasks.length > 0,
+    );
 
     for (const builtinId of this.config.modules.builtins) {
       this.moduleManager.register(createBuiltinModule(builtinId));
@@ -708,7 +720,14 @@ class GanttHostImpl implements GanttHostController {
   }
 
   resetCamera(): void {
-    this.camera = createCamera(this.camera.viewportWidth, this.camera.viewportHeight);
+    this.stopCameraAnimation();
+    this.camera = createHostCameraState(
+      this.camera.viewportWidth,
+      this.camera.viewportHeight,
+      this.config.render.headerHeight,
+      this.scene.timelineStart,
+      this.scene.tasks.length > 0,
+    );
     this.requestRender();
   }
 

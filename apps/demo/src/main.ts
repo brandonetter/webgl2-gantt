@@ -150,7 +150,7 @@ async function boot(): Promise<void> {
     ui: {
       title: 'Core only',
       showInspector: false,
-      statusText: 'Drag to pan, wheel to scroll, ctrl + wheel to zoom. Double-click a task to focus it.',
+      statusText: 'Drag to pan, wheel to scroll, ctrl + wheel zooms time. Double-click a task to focus it.',
     },
   };
 

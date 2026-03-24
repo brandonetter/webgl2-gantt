@@ -14,7 +14,7 @@ import type {
 } from './types';
 
 export const DEFAULT_STATUS_TEXT =
-  'Use Day/Week/Month/Quarter/Year to snap scale. Drag to pan. Wheel to scroll. Ctrl + wheel zooms around the cursor. Click to select.';
+  'Use Day/Week/Month/Quarter/Year to snap scale. Drag to pan. Wheel to scroll. Ctrl + wheel zooms time around the cursor. Click to select.';
 
 export const DEFAULT_UI_CONFIG: Required<UiConfig> = {
   showHud: true,

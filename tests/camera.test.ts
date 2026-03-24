@@ -21,7 +21,7 @@ describe('camera transforms', () => {
     const camera = {
       ...createCamera(1200, 800),
       scrollX: 50,
-      scrollY: 30,
+      scrollY: -40,
       zoomX: 1,
       zoomY: 1,
     };
@@ -31,12 +31,13 @@ describe('camera transforms', () => {
     const after = worldToScreen(zoomed, anchorWorld[0], anchorWorld[1]);
 
     expect(zoomed.zoomX).toBeCloseTo(2);
-    expect(zoomed.zoomY).toBeCloseTo(2);
+    expect(zoomed.zoomY).toBeCloseTo(1);
     expect(after[0]).toBeCloseTo(220);
     expect(after[1]).toBeCloseTo(140);
+    expect(worldToScreen(zoomed, 0, 0)[1]).toBeCloseTo(40);
   });
 
-  it('re-attaches vertical zoom correctly when zooming back out', () => {
+  it('normalizes legacy vertical zoom without moving the zoom anchor', () => {
     const detached = {
       ...createCamera(1200, 800),
       scrollX: 50,
@@ -45,12 +46,13 @@ describe('camera transforms', () => {
       zoomY: 2.15,
     };
 
-    const firstStep = zoomCameraAt(detached, 0.5, 220, 140);
-    const secondStep = zoomCameraAt(firstStep, 0.5, 220, 140);
+    const anchorWorld = screenToWorld(detached, 220, 140);
+    const normalized = zoomCameraAt(detached, 0.5, 220, 140);
+    const after = worldToScreen(normalized, anchorWorld[0], anchorWorld[1]);
 
-    expect(firstStep.zoomX).toBeCloseTo(5);
-    expect(firstStep.zoomY).toBeCloseTo(2.15);
-    expect(secondStep.zoomX).toBeCloseTo(2.5);
-    expect(secondStep.zoomY).toBeCloseTo(2.15);
+    expect(normalized.zoomX).toBeCloseTo(5);
+    expect(normalized.zoomY).toBeCloseTo(1);
+    expect(after[0]).toBeCloseTo(220);
+    expect(after[1]).toBeCloseTo(140);
   });
 });
