@@ -12,6 +12,10 @@ describe('config normalization', () => {
     expect(config.ui.showToolbar).toBe(true);
     expect(config.ui.showStatusLine).toBe(true);
     expect(config.font.sizePx).toBe(12);
+    expect(config.edit.enabled).toBe(false);
+    expect(config.edit.defaultMode).toBe('view');
+    expect(config.edit.resize.handleWidthPx).toBe(12);
+    expect(config.edit.snap.mode).toBe('day');
     expect(config.container.toolbar.position).toBe('top');
     expect(config.container.toolbar.height).toBe(56);
     expect(config.container.header.visible).toBe(false);
@@ -26,6 +30,14 @@ describe('config normalization', () => {
       },
       render: {
         rowPitch: 44,
+      },
+      edit: {
+        enabled: true,
+        defaultMode: 'edit',
+        snap: {
+          mode: 'increment',
+          incrementDays: 7,
+        },
       },
       container: {
         width: 800,
@@ -45,6 +57,10 @@ describe('config normalization', () => {
     expect(config.ui.showInspector).toBe(true);
     expect(config.render.rowPitch).toBe(44);
     expect(config.render.barHeight).toBe(14);
+    expect(config.edit.enabled).toBe(true);
+    expect(config.edit.defaultMode).toBe('edit');
+    expect(config.edit.snap.mode).toBe('increment');
+    expect(config.edit.snap.incrementDays).toBe(7);
     expect(config.container.width).toBe(800);
     expect(config.container.height).toBe(300);
     expect(config.container.footer.visible).toBe(true);

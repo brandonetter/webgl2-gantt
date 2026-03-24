@@ -243,7 +243,7 @@ function createProgram(gl: WebGL2RenderingContext, vertexSource: string, fragmen
   return program;
 }
 
-function createFloatBuffer(gl: WebGL2RenderingContext, data: Float32Array, usage = gl.DYNAMIC_DRAW): WebGLBuffer {
+function createFloatBuffer(gl: WebGL2RenderingContext, data: Float32Array, usage: number = gl.DYNAMIC_DRAW): WebGLBuffer {
   const buffer = gl.createBuffer();
   if (!buffer) {
     throw new Error('Unable to create WebGL buffer.');

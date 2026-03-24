@@ -6,17 +6,40 @@ function readOptions(rawOptions) {
   };
 }
 
+function cloneTask(task) {
+  return {
+    ...task,
+    dependencies: task.dependencies ? task.dependencies.slice() : undefined,
+  };
+}
+
+function clampTaskStart(task) {
+  if (task.start >= 0) {
+    return null;
+  }
+
+  const duration = task.end - task.start;
+  return {
+    ...cloneTask(task),
+    start: 0,
+    end: 0 + duration,
+  };
+}
+
 const safePlugin = {
   meta: {
     id: 'demo-safe-style',
-    version: '1.0.0',
+    version: '1.1.0',
     apiRange: '^1.0.0',
   },
   create(context) {
     const options = readOptions(context.pluginConfig.options);
     let badge = null;
     let visibleTasks = 0;
-    let selectedLabel = 'No task selected';
+    let selectionLabel = 'No task selected';
+    let modeLabel = 'Mode: View';
+    let editLabel = 'Edit lifecycle idle';
+    let commitCount = 0;
     const cleanups = [];
 
     function ensureBadge(root) {
@@ -35,6 +58,7 @@ const safePlugin = {
         <p class="plugin-badge__title"></p>
         <p class="plugin-badge__metric"></p>
         <p class="plugin-badge__detail"></p>
+        <p class="plugin-badge__detail plugin-badge__detail--subtle"></p>
       `;
       root.append(badge);
       return badge;
@@ -49,6 +73,7 @@ const safePlugin = {
       const title = badge.querySelector('.plugin-badge__title');
       const metric = badge.querySelector('.plugin-badge__metric');
       const detail = badge.querySelector('.plugin-badge__detail');
+      const subtleDetail = badge.querySelector('.plugin-badge__detail--subtle');
 
       if (title) {
         title.textContent = options.badgeLabel;
@@ -57,7 +82,10 @@ const safePlugin = {
         metric.textContent = `${visibleTasks} visible tasks`;
       }
       if (detail) {
-        detail.textContent = selectedLabel;
+        detail.textContent = `${modeLabel} • commits ${commitCount}`;
+      }
+      if (subtleDetail) {
+        subtleDetail.textContent = `${selectionLabel} • ${editLabel}`;
       }
     }
 
@@ -76,20 +104,60 @@ const safePlugin = {
         );
 
         cleanups.push(
+          context.safe.registerTaskEditResolver((event) => {
+            const clamped = clampTaskStart(event.proposedTask);
+            if (clamped) {
+              editLabel = `Resolver clamped ${event.operation} at day 0`;
+              renderBadge();
+              return clamped;
+            }
+            return null;
+          }),
+        );
+
+        cleanups.push(
           context.safe.registerOverlay(({ root, frame }) => {
             visibleTasks = frame.stats.visibleTasks;
             ensureBadge(root);
             renderBadge();
           }),
         );
+
+        modeLabel = `Mode: ${context.safe.getInteractionState().mode === 'edit' ? 'Edit' : 'View'}`;
       },
 
       onSelectionChange(selection) {
-        selectedLabel = selection.selectedTask
+        selectionLabel = selection.selectedTask
           ? `Selected: ${selection.selectedTask.label}`
           : selection.hoveredTask
             ? `Hover: ${selection.hoveredTask.label}`
             : 'No task selected';
+        renderBadge();
+      },
+
+      onEditModeChange(mode) {
+        modeLabel = `Mode: ${mode === 'edit' ? 'Edit' : 'View'}`;
+        renderBadge();
+      },
+
+      onTaskEditStart(event) {
+        editLabel = `Start: ${event.operation} ${event.originalTask.label}`;
+        renderBadge();
+      },
+
+      onTaskEditPreview(event) {
+        editLabel = `Preview: row ${event.proposedTask.rowIndex}, ${event.proposedTask.start.toFixed(0)}-${event.proposedTask.end.toFixed(0)}`;
+        renderBadge();
+      },
+
+      onTaskEditCommit(event) {
+        commitCount += 1;
+        editLabel = `Commit: ${event.proposedTask.label}`;
+        renderBadge();
+      },
+
+      onTaskEditCancel(event) {
+        editLabel = `Cancelled: ${event.originalTask.label}`;
         renderBadge();
       },
 

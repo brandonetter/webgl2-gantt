@@ -23,8 +23,11 @@ function makeHostApi(configInput = {}) {
         registerOverlay: () => () => undefined,
         registerUiCommand: () => () => undefined,
         registerModule: () => () => undefined,
+        registerTaskEditResolver: () => () => undefined,
         getSceneSnapshot: () => ({ tasks: [], rowLabels: [], timelineStart: 0, timelineEnd: 0 }),
         getCameraSnapshot: () => ({ scrollX: 0, scrollY: 0, zoomX: 1, zoomY: 1, viewportWidth: 100, viewportHeight: 100 }),
+        getInteractionState: () => ({ mode: 'view' as const, activeEdit: null }),
+        setInteractionMode: () => undefined,
         logger: {
           info: () => undefined,
           warn: () => undefined,
@@ -206,5 +209,73 @@ describe('plugin runtime', () => {
     expect(registerStyle).toHaveBeenCalledTimes(1);
     expect(registerOverlay).toHaveBeenCalledTimes(1);
     expect(advancedRender).toHaveBeenCalledTimes(1);
+  });
+
+  it('notifies edit mode and task edit lifecycle hooks in load order', async () => {
+    const events: string[] = [];
+    const editPlugin: GanttPlugin = {
+      meta: {
+        id: 'edit-plugin',
+        version: '1.1.0',
+        apiRange: '^1.0.0',
+      },
+      create: () => ({
+        onEditModeChange: (mode) => {
+          events.push(`mode:${mode}`);
+        },
+        onTaskEditStart: (event) => {
+          events.push(`start:${event.operation}`);
+        },
+        onTaskEditPreview: (event) => {
+          events.push(`preview:${event.proposedTask.start}`);
+        },
+        onTaskEditCommit: (event) => {
+          events.push(`commit:${event.proposedTask.end}`);
+        },
+        onTaskEditCancel: (event) => {
+          events.push(`cancel:${event.originalTask.id}`);
+        },
+      }),
+    };
+
+    loadPluginsMock.mockResolvedValue([
+      {
+        definition: editPlugin,
+        config: {
+          source: { type: 'esm', url: 'https://example.com/edit.mjs' },
+        },
+      },
+    ]);
+
+    const { api } = makeHostApi();
+    const runtime = new PluginRuntime(api);
+
+    await runtime.load();
+    await runtime.init();
+
+    const editEvent = {
+      taskId: 'task-1',
+      operation: 'move' as const,
+      originalTask: { id: 'task-1', rowIndex: 0, start: 1, end: 3, label: 'Task 1' },
+      proposedTask: { id: 'task-1', rowIndex: 1, start: 4, end: 6, label: 'Task 1' },
+      previousDraftTask: null,
+      pointer: { screenX: 10, screenY: 20, worldX: 4, worldY: 30 },
+      snap: { mode: 'day' as const, incrementDays: 1, applied: true, disabledByModifier: false },
+    };
+
+    runtime.notifyEditModeChange('edit');
+    runtime.notifyTaskEditStart(editEvent);
+    runtime.notifyTaskEditPreview(editEvent);
+    runtime.notifyTaskEditCommit(editEvent);
+    runtime.notifyTaskEditCancel(editEvent);
+    await Promise.resolve();
+
+    expect(events).toEqual([
+      'mode:edit',
+      'start:move',
+      'preview:4',
+      'commit:6',
+      'cancel:task-1',
+    ]);
   });
 });

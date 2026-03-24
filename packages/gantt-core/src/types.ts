@@ -12,7 +12,7 @@ import type {
 } from './core';
 import type { SampleOptions } from './data';
 
-export const GANTT_PLUGIN_API_VERSION = '1.0.0';
+export const GANTT_PLUGIN_API_VERSION = '1.1.0';
 
 export type TaskStyleOverride = {
   fill?: [number, number, number, number];
@@ -53,11 +53,72 @@ export type PluginSelectionState = {
   hoveredDependency: DependencyPath | null;
 };
 
+export type GanttInteractionMode = 'view' | 'edit';
+
+export type GanttTaskEditOperation = 'move' | 'resize-start' | 'resize-end';
+
+export type GanttTaskEditStatus = 'preview' | 'committing';
+
+export type GanttEditSnapMode = 'off' | 'day' | 'increment';
+
+export type GanttTaskEditSnap = {
+  mode: GanttEditSnapMode;
+  incrementDays: number;
+  applied: boolean;
+  disabledByModifier: boolean;
+};
+
+export type GanttTaskEditPointer = {
+  screenX: number;
+  screenY: number;
+  worldX: number;
+  worldY: number;
+};
+
+export type GanttTaskEditEvent = {
+  taskId: string;
+  operation: GanttTaskEditOperation;
+  originalTask: GanttTask;
+  proposedTask: GanttTask;
+  previousDraftTask: GanttTask | null;
+  pointer: GanttTaskEditPointer;
+  snap: GanttTaskEditSnap;
+};
+
+export type GanttTaskEditState = {
+  taskId: string;
+  operation: GanttTaskEditOperation;
+  originalTask: GanttTask;
+  draftTask: GanttTask;
+  status: GanttTaskEditStatus;
+};
+
+export type GanttInteractionState = {
+  mode: GanttInteractionMode;
+  activeEdit: GanttTaskEditState | null;
+};
+
+export type GanttTaskEditResolver = (
+  event: GanttTaskEditEvent,
+) => GanttTask | false | null | undefined;
+
+export type GanttEditCallbacks = {
+  onTaskEditStart?: (event: GanttTaskEditEvent) => void;
+  onTaskEditPreview?: (event: GanttTaskEditEvent) => void;
+  onTaskEditCommit?: (event: GanttTaskEditEvent) => GanttTask | false | Promise<GanttTask | false>;
+  onTaskEditCancel?: (event: GanttTaskEditEvent) => void;
+};
+
 export type GanttPluginInstance = {
   onInit?: () => void | Promise<void>;
   onSceneBuild?: (scene: GanttScene) => void | GanttScene | Promise<void | GanttScene>;
   onFrameBuild?: (frame: FrameScene) => void | FrameScene | Promise<void | FrameScene>;
   onSelectionChange?: (selection: PluginSelectionState) => void | Promise<void>;
+  onEditModeChange?: (mode: GanttInteractionMode) => void | Promise<void>;
+  onTaskEditStart?: (event: GanttTaskEditEvent) => void | Promise<void>;
+  onTaskEditPreview?: (event: GanttTaskEditEvent) => void | Promise<void>;
+  onTaskEditCommit?: (event: GanttTaskEditEvent) => void | Promise<void>;
+  onTaskEditCancel?: (event: GanttTaskEditEvent) => void | Promise<void>;
   onDispose?: () => void | Promise<void>;
 };
 
@@ -75,8 +136,11 @@ export type GanttSafeApi = {
   registerOverlay: (overlay: OverlayRenderer) => () => void;
   registerUiCommand: (command: UiCommand) => () => void;
   registerModule: (module: GanttModule) => () => void;
+  registerTaskEditResolver: (resolver: GanttTaskEditResolver) => () => void;
   getSceneSnapshot: () => Readonly<GanttScene>;
   getCameraSnapshot: () => Readonly<CameraState>;
+  getInteractionState: () => Readonly<GanttInteractionState>;
+  setInteractionMode: (mode: GanttInteractionMode) => void;
   logger: {
     info: (message: string, details?: unknown) => void;
     warn: (message: string, details?: unknown) => void;
@@ -189,6 +253,30 @@ export type GanttFontConfig = {
   msdfManifestUrls?: Record<string, string>;
 };
 
+export type GanttEditDragConfig = {
+  allowRowChange?: boolean;
+};
+
+export type GanttEditResizeConfig = {
+  enabled?: boolean;
+  handleWidthPx?: number;
+  minDurationDays?: number;
+};
+
+export type GanttEditSnapConfig = {
+  mode?: GanttEditSnapMode;
+  incrementDays?: number;
+};
+
+export type GanttEditConfig = {
+  enabled?: boolean;
+  defaultMode?: GanttInteractionMode;
+  drag?: GanttEditDragConfig;
+  resize?: GanttEditResizeConfig;
+  snap?: GanttEditSnapConfig;
+  callbacks?: GanttEditCallbacks;
+};
+
 export type GanttConfig = {
   data?: DataConfig;
   render?: Partial<FrameOptions>;
@@ -196,6 +284,7 @@ export type GanttConfig = {
   ui?: UiConfig;
   container?: GanttContainerConfig;
   font?: GanttFontConfig;
+  edit?: GanttEditConfig;
   plugins?: PluginConfig[];
   modules?: ModulesConfig;
   features?: GanttFeatureFlags;
@@ -214,6 +303,18 @@ export type NormalizedGanttContainerConfig = {
   toolbar: Required<GanttContainerToolbarConfig>;
 };
 
+export type NormalizedGanttEditConfig = {
+  enabled: boolean;
+  defaultMode: GanttInteractionMode;
+  drag: Required<GanttEditDragConfig>;
+  resize: Required<GanttEditResizeConfig>;
+  snap: {
+    mode: GanttEditSnapMode;
+    incrementDays: number;
+  };
+  callbacks: GanttEditCallbacks;
+};
+
 export type NormalizedGanttConfig = {
   data: DataConfig;
   render: FrameOptions;
@@ -221,6 +322,7 @@ export type NormalizedGanttConfig = {
   ui: Required<UiConfig>;
   container: NormalizedGanttContainerConfig;
   font: GanttFontConfig;
+  edit: NormalizedGanttEditConfig;
   plugins: PluginConfig[];
   modules: { builtins: Array<'camera-controls' | 'selection' | 'hud-inspector' | 'toolbar'> };
   features: Required<GanttFeatureFlags>;
@@ -237,17 +339,26 @@ export type GanttHostController = {
   getScene: () => GanttScene;
   getCamera: () => CameraState;
   getIndex: () => TaskIndex;
+  getRenderOptions: () => FrameOptions;
+  getEditConfig: () => NormalizedGanttEditConfig;
   getRenderer: () => unknown;
   getGl: () => WebGL2RenderingContext;
   getCurrentFrame: () => FrameScene | null;
   getLastFrameMs: () => number;
   getVisibleWindow: () => ViewWindow;
+  getInteractionState: () => GanttInteractionState;
+  isTaskEditPending: () => boolean;
   requestRender: () => void;
   setStatusText: (text: string) => void;
+  replaceScene: (scene: GanttScene) => void;
   registerCleanup: (callback: () => void) => void;
   getSelection: () => PluginSelectionState;
   setSelectionByTaskId: (taskId: string | null) => void;
   setSelectionByScreenPoint: (x: number, y: number) => void;
+  setInteractionMode: (mode: GanttInteractionMode) => void;
+  cancelActiveEdit: () => void;
+  previewTaskEdit: (event: GanttTaskEditEvent) => GanttTaskEditEvent | null;
+  commitActiveEdit: (event?: GanttTaskEditEvent | null) => Promise<boolean>;
   updateHoverFromScreen: (x: number, y: number) => void;
   pickTaskAtScreen: (x: number, y: number) => GanttTask | null;
   pickDependencyAtScreen: (x: number, y: number) => DependencyPath | null;

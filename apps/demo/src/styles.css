@@ -251,6 +251,12 @@ code {
   gap: 8px;
 }
 
+.demo-snap-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .theme-chip {
   appearance: none;
   border: 1px solid rgba(67, 53, 39, 0.14);
@@ -390,6 +396,7 @@ code {
 
 .demo-chart .zoom-toolbar {
   display: flex;
+  align-items: center;
   width: fit-content;
   max-width: 100%;
   gap: 4px;
@@ -401,6 +408,19 @@ code {
     inset 0 1px 0 rgba(255, 255, 255, 0.06),
     0 10px 24px rgba(0, 0, 0, 0.24);
   pointer-events: auto;
+}
+
+.toolbar-group {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.toolbar-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 4px 2px;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .zoom-button {
@@ -491,6 +511,10 @@ code {
   font-size: 13px;
   line-height: 1.45;
   color: rgba(234, 244, 251, 0.76);
+}
+
+.plugin-badge__detail--subtle {
+  color: rgba(234, 244, 251, 0.62);
 }
 
 .demo-error {

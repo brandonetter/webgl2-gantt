@@ -9,8 +9,10 @@ import {
 import { createSampleScene } from './data';
 import type {
   GanttConfig,
+  GanttEditCallbacks,
   GanttFontConfig,
   NormalizedGanttConfig,
+  NormalizedGanttEditConfig,
   UiConfig,
   DataConfig,
   ModulesConfig,
@@ -22,7 +24,7 @@ import type {
 } from './types';
 
 export const DEFAULT_STATUS_TEXT =
-  'Use Day/Week/Month/Quarter/Year to snap scale. Drag to pan. Wheel to scroll. Ctrl + wheel zooms time around the cursor. Click to select.';
+  'Use Day/Week/Month/Quarter/Year to snap scale. Drag to pan. Wheel to scroll. Ctrl + wheel zooms time around the cursor. Click to select. Press E to toggle edit mode when enabled.';
 
 export const DEFAULT_UI_CONFIG: Required<UiConfig> = {
   showHud: true,
@@ -66,6 +68,24 @@ export const DEFAULT_FONT_CONFIG: GanttFontConfig = {
   weight: 600,
   msdfManifestUrl: undefined,
   msdfManifestUrls: undefined,
+};
+export const DEFAULT_EDIT_CALLBACKS: GanttEditCallbacks = {};
+export const DEFAULT_EDIT_CONFIG: NormalizedGanttEditConfig = {
+  enabled: false,
+  defaultMode: 'view',
+  drag: {
+    allowRowChange: true,
+  },
+  resize: {
+    enabled: true,
+    handleWidthPx: 12,
+    minDurationDays: 1,
+  },
+  snap: {
+    mode: 'day',
+    incrementDays: 1,
+  },
+  callbacks: DEFAULT_EDIT_CALLBACKS,
 };
 
 export const DEFAULT_CONTAINER_CONFIG: NormalizedGanttContainerConfig = {
@@ -333,6 +353,26 @@ function mergeFontConfig(font: GanttFontConfig | undefined): GanttFontConfig {
   };
 }
 
+function mergeEditConfig(config: GanttConfig['edit']): NormalizedGanttEditConfig {
+  return {
+    enabled: config?.enabled ?? DEFAULT_EDIT_CONFIG.enabled,
+    defaultMode: config?.defaultMode ?? DEFAULT_EDIT_CONFIG.defaultMode,
+    drag: {
+      allowRowChange: config?.drag?.allowRowChange ?? DEFAULT_EDIT_CONFIG.drag.allowRowChange,
+    },
+    resize: {
+      enabled: config?.resize?.enabled ?? DEFAULT_EDIT_CONFIG.resize.enabled,
+      handleWidthPx: config?.resize?.handleWidthPx ?? DEFAULT_EDIT_CONFIG.resize.handleWidthPx,
+      minDurationDays: config?.resize?.minDurationDays ?? DEFAULT_EDIT_CONFIG.resize.minDurationDays,
+    },
+    snap: {
+      mode: config?.snap?.mode ?? DEFAULT_EDIT_CONFIG.snap.mode,
+      incrementDays: config?.snap?.incrementDays ?? DEFAULT_EDIT_CONFIG.snap.incrementDays,
+    },
+    callbacks: config?.callbacks ? { ...config.callbacks } : DEFAULT_EDIT_CALLBACKS,
+  };
+}
+
 export function normalizeConfig(config: GanttConfig = {}): NormalizedGanttConfig {
   return {
     data: mergeDataConfig(config.data),
@@ -341,6 +381,7 @@ export function normalizeConfig(config: GanttConfig = {}): NormalizedGanttConfig
     ui: mergeUiConfig(config.ui),
     container: mergeContainerConfig(config.container),
     font: mergeFontConfig(config.font),
+    edit: mergeEditConfig(config.edit),
     plugins: mergePlugins(config.plugins),
     modules: mergeModulesConfig(config.modules),
     features: mergeFeatures(config.features),

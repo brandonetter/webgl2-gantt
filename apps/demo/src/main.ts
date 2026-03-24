@@ -22,10 +22,24 @@ if (!root) {
   throw new Error('Missing application root element.');
 }
 
+const appRoot = root;
+
 const SAMPLE_OPTIONS = {
   seed: 24,
   orderCount: 56,
 };
+
+type DemoSnapPresetId = 'off' | 'day' | 'week';
+
+const SNAP_PRESETS: Array<{
+  id: DemoSnapPresetId;
+  label: string;
+  description: string;
+}> = [
+  { id: 'off', label: 'Snap Off', description: 'Free drag and free resize.' },
+  { id: 'day', label: '1 Day', description: 'Round edits to whole days.' },
+  { id: 'week', label: '7 Day', description: 'Round edits to 7-day blocks.' },
+];
 
 function cloneScene(scene: GanttScene): GanttScene {
   return {
@@ -62,6 +76,32 @@ function demoMsdfManifestUrls() {
   };
 }
 
+function createDemoEditConfig(snapPreset: DemoSnapPresetId): GanttConfig['edit'] {
+  return {
+    enabled: true,
+    defaultMode: 'view',
+    drag: {
+      allowRowChange: true,
+    },
+    resize: {
+      enabled: true,
+      handleWidthPx: 14,
+      minDurationDays: 1,
+    },
+    snap: snapPreset === 'off'
+      ? { mode: 'off' }
+      : snapPreset === 'week'
+        ? { mode: 'increment', incrementDays: 7 }
+        : { mode: 'day' },
+    callbacks: {
+      onTaskEditCommit: async (event) => ({
+        ...event.proposedTask,
+        dependencies: event.proposedTask.dependencies?.slice(),
+      }),
+    },
+  };
+}
+
 function buildPage(scene: GanttScene): string {
   const paperLightTheme = getDemoTheme('paper-light');
   const defaultTheme = getDemoTheme(DEFAULT_THEME_ID);
@@ -71,10 +111,10 @@ function buildPage(scene: GanttScene): string {
       <section class="demo-hero">
         <div class="demo-hero__copy">
           <p class="demo-eyebrow">Gantt Core Showcase</p>
-          <h1>Four gantt renders with themes split cleanly into config and CSS.</h1>
+          <h1>Editable gantt rendering, plugin hooks, and theme presets in one surface.</h1>
           <p class="demo-lede">
-            The demo page now acts as a display-system test bench.
-            Each gantt gets a full horizontal section so layout, plugin behavior, and theming can be compared without squeezing everything into a single lab card.
+            The page now doubles as an interaction bench.
+            View mode, edit mode, drag-move, resize handles, snapping presets, and plugin callbacks all stay visible while the themed hosts continue to prove the renderer surface.
           </p>
         </div>
         <div class="demo-stats" aria-label="Dataset summary">
@@ -102,17 +142,23 @@ function buildPage(scene: GanttScene): string {
           <div class="demo-band__copy">
             <p class="demo-card__eyebrow">Baseline</p>
             <div class="demo-card__heading">
-              <h2>Core renderer only</h2>
+              <h2>Core editor controls</h2>
               <p>
-                This first section is the plain host: camera, selection, HUD, toolbar, and the stock render path.
-                It gives the page a clean "this is the engine by itself" reference point.
+                This section is the stock host with the new editing runtime turned on.
+                Use the built-in View/Edit toggle, then drag tasks, resize them from the handles, or switch snap presets below.
               </p>
             </div>
             <ul class="demo-note-list">
-              <li>Pure <code>createGanttHost(...)</code> render path</li>
-              <li>Shared sample scene for direct visual comparison</li>
-              <li>Each chart gets its own full-width narrative band</li>
+              <li>Pure <code>createGanttHost(...)</code> path with no plugins</li>
+              <li>Uses edit callbacks and draft overlays from core only</li>
+              <li>Press <code>E</code> to toggle edit mode and <code>Shift</code> to bypass snapping mid-drag</li>
             </ul>
+            <div class="demo-snap-picker" aria-label="Baseline snap presets">
+              ${SNAP_PRESETS.map((preset) => (
+                `<button type="button" class="theme-chip demo-snap-chip" data-snap-preset="${preset.id}" data-active="${preset.id === 'day' ? 'true' : 'false'}" aria-pressed="${preset.id === 'day' ? 'true' : 'false'}">${preset.label}</button>`
+              )).join('')}
+            </div>
+            <p class="theme-picker__detail" data-snap-description>${SNAP_PRESETS.find((preset) => preset.id === 'day')?.description}</p>
           </div>
           <div class="demo-band__visual">
             <div class="demo-chart-frame">
@@ -127,14 +173,15 @@ function buildPage(scene: GanttScene): string {
             <div class="demo-card__heading">
               <h2>Safe plugin enabled</h2>
               <p>
-                The second section keeps the chart large, but shifts the explanation to the opposite side.
-                That makes the plugin differences feel editorial rather than cramped into a second card.
+                The second section uses the safe plugin API for edit-aware behavior.
+                Its badge now tracks mode changes and edit lifecycle events while a resolver adjusts draft edits before commit.
               </p>
             </div>
             <ul class="demo-note-list">
               <li>Loads the safe plugin from <code>public/plugins</code></li>
               <li>Styles selection and hover through plugin hooks</li>
-              <li>Renders a live overlay badge inside the chart surface</li>
+              <li>Uses a task edit resolver and lifecycle callbacks from the safe API</li>
+              <li>Runs on a weekly snap preset to make the resolver behavior obvious</li>
             </ul>
           </div>
           <div class="demo-band__visual">
@@ -225,27 +272,31 @@ async function mountDemoHost(
 async function boot(): Promise<void> {
   const sharedScene = createSampleScene(SAMPLE_OPTIONS);
   const msdfManifestUrls = demoMsdfManifestUrls();
-  root.innerHTML = buildPage(sharedScene);
+  appRoot.innerHTML = buildPage(sharedScene);
 
-  const baselineMount = root.querySelector<HTMLElement>(
+  const baselineMount = appRoot.querySelector<HTMLElement>(
     '[data-demo-mount="baseline"]',
   );
-  const pluginMount = root.querySelector<HTMLElement>(
+  const pluginMount = appRoot.querySelector<HTMLElement>(
     '[data-demo-mount="plugin"]',
   );
-  const lightMount = root.querySelector<HTMLElement>(
+  const lightMount = appRoot.querySelector<HTMLElement>(
     '[data-demo-mount="light"]',
   );
-  const themePickerMount = root.querySelector<HTMLElement>(
+  const themePickerMount = appRoot.querySelector<HTMLElement>(
     '[data-demo-mount="theme-picker"]',
   );
   const themePickerFrame = themePickerMount?.parentElement;
-  const themeLabel = root.querySelector<HTMLElement>('[data-theme-label]');
-  const themeDescription = root.querySelector<HTMLElement>(
+  const themeLabel = appRoot.querySelector<HTMLElement>('[data-theme-label]');
+  const themeDescription = appRoot.querySelector<HTMLElement>(
     '[data-theme-description]',
   );
+  const snapDescription = appRoot.querySelector<HTMLElement>('[data-snap-description]');
+  const snapButtons = Array.from(
+    appRoot.querySelectorAll<HTMLButtonElement>('[data-snap-preset]'),
+  );
   const themeButtons = Array.from(
-    root.querySelectorAll<HTMLButtonElement>('[data-theme-id]'),
+    appRoot.querySelectorAll<HTMLButtonElement>('[data-theme-id]'),
   );
 
   if (
@@ -256,12 +307,23 @@ async function boot(): Promise<void> {
     !(themePickerFrame instanceof HTMLElement) ||
     !themeLabel ||
     !themeDescription ||
+    !snapDescription ||
+    snapButtons.length !== SNAP_PRESETS.length ||
     themeButtons.length !== DEMO_THEMES.length
   ) {
     throw new Error('Missing showcase mount points.');
   }
 
-  const baseConfig: GanttConfig = {
+  const themeFrame = themePickerFrame;
+  const baselineMountEl = baselineMount;
+  const pluginMountEl = pluginMount;
+  const lightMountEl = lightMount;
+  const themePickerMountEl = themePickerMount;
+  const themeLabelEl = themeLabel;
+  const themeDescriptionEl = themeDescription;
+  const snapDescriptionEl = snapDescription;
+
+  const buildBaseConfig = (snapPreset: DemoSnapPresetId): GanttConfig => ({
     data: {
       type: 'static',
       scene: cloneScene(sharedScene),
@@ -277,13 +339,14 @@ async function boot(): Promise<void> {
         position: 'top',
       },
     },
+    edit: createDemoEditConfig(snapPreset),
     ui: {
-      title: 'Core only',
+      title: 'Core editor',
       showInspector: false,
       statusText:
-        'Drag to pan, wheel to scroll, ctrl + wheel zooms time. Double-click a task to focus it.',
+        'Press E for edit mode. Drag to move, use handles to resize, Shift disables snapping, and double-click still focuses in view mode.',
     },
-  };
+  });
 
   const pluginConfig: GanttConfig = {
     data: {
@@ -300,11 +363,12 @@ async function boot(): Promise<void> {
         position: 'top',
       },
     },
+    edit: createDemoEditConfig('week'),
     ui: {
       title: 'Safe plugin active',
       showInspector: false,
       statusText:
-        'The plugin badge is rendered inside the chart host and updates from safe runtime hooks.',
+        'This host runs edit callbacks plus a safe plugin resolver. Weekly snapping is enabled by default here.',
     },
     plugins: [
       {
@@ -322,8 +386,10 @@ async function boot(): Promise<void> {
   };
 
   const hosts: GanttHost[] = [];
+  let baselineHost: GanttHost | null = null;
   let themePreviewHost: GanttHost | null = null;
   let themeRenderToken = 0;
+  let activeSnapPreset: DemoSnapPresetId = 'day';
 
   function setThemeButtonState(activeThemeId: DemoThemeId, busy: boolean): void {
     for (const button of themeButtons) {
@@ -335,17 +401,44 @@ async function boot(): Promise<void> {
     }
   }
 
+  function setSnapButtonState(activePresetId: DemoSnapPresetId, busy: boolean): void {
+    for (const button of snapButtons) {
+      const presetId = button.dataset.snapPreset as DemoSnapPresetId;
+      const active = presetId === activePresetId;
+      button.dataset.active = active ? 'true' : 'false';
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+      button.disabled = busy;
+    }
+    snapDescriptionEl.textContent = SNAP_PRESETS.find((preset) => preset.id === activePresetId)?.description ?? '';
+  }
+
   function applyThemeShell(themeId: DemoThemeId): void {
-    themePickerFrame.classList.remove(...THEME_SHELL_CLASSES);
-    themePickerFrame.classList.add(getDemoTheme(themeId).className);
+    themeFrame.classList.remove(...THEME_SHELL_CLASSES);
+    themeFrame.classList.add(getDemoTheme(themeId).className);
+  }
+
+  async function mountBaselinePreview(snapPreset: DemoSnapPresetId): Promise<void> {
+    activeSnapPreset = snapPreset;
+    setSnapButtonState(snapPreset, true);
+    const previousHost = baselineHost;
+    baselineHost = null;
+    if (previousHost) {
+      await previousHost.dispose();
+    }
+
+    baselineHost = await mountDemoHost(
+      baselineMountEl,
+      buildBaseConfig(snapPreset),
+    );
+    setSnapButtonState(snapPreset, false);
   }
 
   async function mountThemePreview(themeId: DemoThemeId): Promise<void> {
     const token = ++themeRenderToken;
     const theme = getDemoTheme(themeId);
 
-    themeLabel.textContent = theme.label;
-    themeDescription.textContent = theme.description;
+    themeLabelEl.textContent = theme.label;
+    themeDescriptionEl.textContent = theme.description;
     applyThemeShell(themeId);
     setThemeButtonState(themeId, true);
 
@@ -359,8 +452,11 @@ async function boot(): Promise<void> {
     }
 
     const nextHost = await mountDemoHost(
-      themePickerMount,
-      buildThemeConfig(sharedScene, themeId, msdfManifestUrls),
+      themePickerMountEl,
+      {
+        ...buildThemeConfig(sharedScene, themeId, msdfManifestUrls),
+        edit: createDemoEditConfig('day'),
+      },
     );
     if (token !== themeRenderToken) {
       await nextHost.dispose();
@@ -372,17 +468,29 @@ async function boot(): Promise<void> {
   }
 
   try {
-    hosts.push(await mountDemoHost(baselineMount, baseConfig));
-    hosts.push(await mountDemoHost(pluginMount, pluginConfig));
+    await mountBaselinePreview(activeSnapPreset);
+    hosts.push(await mountDemoHost(pluginMountEl, pluginConfig));
     hosts.push(
       await mountDemoHost(
-        lightMount,
-        buildThemeConfig(sharedScene, 'paper-light', msdfManifestUrls),
+        lightMountEl,
+        {
+          ...buildThemeConfig(sharedScene, 'paper-light', msdfManifestUrls),
+          edit: createDemoEditConfig('day'),
+        },
       ),
     );
     await mountThemePreview(DEFAULT_THEME_ID);
     if (themePreviewHost) {
       hosts.push(themePreviewHost);
+    }
+    for (const button of snapButtons) {
+      button.addEventListener('click', () => {
+        const presetId = button.dataset.snapPreset as DemoSnapPresetId | undefined;
+        if (!presetId || presetId === activeSnapPreset) {
+          return;
+        }
+        void mountBaselinePreview(presetId);
+      });
     }
     for (const button of themeButtons) {
       button.addEventListener('click', () => {
@@ -394,6 +502,8 @@ async function boot(): Promise<void> {
       });
     }
   } catch (error) {
+    const activeBaselineHost = baselineHost as { dispose: () => Promise<void> } | null;
+    await activeBaselineHost?.dispose();
     await Promise.allSettled(hosts.map((host) => host.dispose()));
     throw error;
   }
@@ -401,7 +511,7 @@ async function boot(): Promise<void> {
 
 boot().catch((error) => {
   console.error(error);
-  root.innerHTML = `
+  appRoot.innerHTML = `
     <main class="demo-page">
       <section class="demo-error">
         <p class="demo-eyebrow">Boot Failure</p>

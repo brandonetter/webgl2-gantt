@@ -3,8 +3,10 @@ import { loadPlugins } from './plugin-loader';
 import {
   GANTT_PLUGIN_API_VERSION,
   type GanttAdvancedApi,
+  type GanttInteractionMode,
   type GanttPlugin,
   type GanttPluginContext,
+  type GanttTaskEditEvent,
   type GanttPluginInstance,
   type GanttSafeApi,
   type NormalizedGanttConfig,
@@ -125,6 +127,45 @@ export class PluginRuntime {
         this.hostApi.logger.error(`Plugin onSelectionChange failed: ${plugin.definition.meta.id}`, error);
       }
     }
+  }
+
+  private notifyLifecycle(
+    hook: keyof Pick<
+      GanttPluginInstance,
+      'onEditModeChange' | 'onTaskEditStart' | 'onTaskEditPreview' | 'onTaskEditCommit' | 'onTaskEditCancel'
+    >,
+    payload: GanttInteractionMode | GanttTaskEditEvent,
+  ): void {
+    for (const plugin of this.plugins) {
+      const handler = plugin.instance[hook];
+      if (!handler) {
+        continue;
+      }
+
+      Promise.resolve(handler(payload as never)).catch((error) => {
+        this.hostApi.logger.error(`${String(hook)} failed: ${plugin.definition.meta.id}`, error);
+      });
+    }
+  }
+
+  notifyEditModeChange(mode: GanttInteractionMode): void {
+    this.notifyLifecycle('onEditModeChange', mode);
+  }
+
+  notifyTaskEditStart(event: GanttTaskEditEvent): void {
+    this.notifyLifecycle('onTaskEditStart', event);
+  }
+
+  notifyTaskEditPreview(event: GanttTaskEditEvent): void {
+    this.notifyLifecycle('onTaskEditPreview', event);
+  }
+
+  notifyTaskEditCommit(event: GanttTaskEditEvent): void {
+    this.notifyLifecycle('onTaskEditCommit', event);
+  }
+
+  notifyTaskEditCancel(event: GanttTaskEditEvent): void {
+    this.notifyLifecycle('onTaskEditCancel', event);
   }
 
   async dispose(): Promise<void> {

@@ -118,6 +118,73 @@ describe('frame assembly', () => {
     expect(zoomedOutPath.segments.length).toBe(zoomedInPath.segments.length);
   });
 
+  it('renders edit outlines, handles, and ghost overlays in edit mode', () => {
+    const atlas = makeTestAtlas();
+    const layout = new TextLayoutEngine(atlas);
+    const scene = {
+      rowLabels: ['Row 1', 'Row 2'],
+      timelineStart: 0,
+      timelineEnd: 100,
+      tasks: [
+        { id: 'a', rowIndex: 0, start: 10, end: 30, label: 'Editable task' },
+        { id: 'b', rowIndex: 1, start: 36, end: 48, label: 'Other task' },
+      ],
+    };
+    const index = buildTaskIndex(scene.tasks, scene.rowLabels.length);
+    const camera = { ...createCamera(800, 280), zoomX: 6, zoomY: 1, scrollX: 0, scrollY: 0 };
+
+    const viewFrame = buildFrame(
+      scene,
+      index,
+      camera,
+      atlas,
+      layout,
+      {
+        selectedTaskId: 'a',
+        hoveredTaskId: null,
+        selectedDependencyId: null,
+        hoveredDependencyId: null,
+      },
+      {
+        rowPitch: 30,
+        barHeight: 16,
+      },
+    );
+
+    const editFrame = buildFrame(
+      scene,
+      index,
+      camera,
+      atlas,
+      layout,
+      {
+        selectedTaskId: 'a',
+        hoveredTaskId: null,
+        selectedDependencyId: null,
+        hoveredDependencyId: null,
+        interactionMode: 'edit',
+        activeEdit: {
+          taskId: 'a',
+          operation: 'move',
+          originalTask: scene.tasks[0],
+          draftTask: { ...scene.tasks[0], rowIndex: 1, start: 14, end: 34 },
+          status: 'preview',
+        },
+        editAffordances: {
+          enabled: true,
+          handleWidthPx: 12,
+          resizeEnabled: true,
+        },
+      },
+      {
+        rowPitch: 30,
+        barHeight: 16,
+      },
+    );
+
+    expect(editFrame.foregroundSolids.count).toBeGreaterThan(viewFrame.foregroundSolids.count);
+  });
+
   it('emits both connectors for a task with double dependencies', () => {
     const atlas = makeTestAtlas();
     const layout = new TextLayoutEngine(atlas);

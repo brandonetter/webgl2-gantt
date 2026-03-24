@@ -70,8 +70,21 @@ export type FrameScene = {
 export type RenderState = {
   selectedTaskId: string | null;
   hoveredTaskId: string | null;
-  selectedDependencyId: string | null;
-  hoveredDependencyId: string | null;
+  selectedDependencyId?: string | null;
+  hoveredDependencyId?: string | null;
+  interactionMode?: 'view' | 'edit';
+  activeEdit?: {
+    taskId: string;
+    operation: 'move' | 'resize-start' | 'resize-end';
+    originalTask: GanttTask;
+    draftTask: GanttTask;
+    status: 'preview' | 'committing';
+  } | null;
+  editAffordances?: {
+    enabled: boolean;
+    handleWidthPx: number;
+    resizeEnabled: boolean;
+  };
   taskStyleResolver?: (input: {
     task: GanttTask;
     selected: boolean;
@@ -563,9 +576,9 @@ export function screenToWorld(
   ];
 }
 
-export function buildTaskIndex(tasks: GanttTask[]): TaskIndex {
+export function buildTaskIndex(tasks: GanttTask[], rowCountHint = 0): TaskIndex {
   const byId = new Map<string, GanttTask>();
-  let maxRow = 0;
+  let maxRow = -1;
   let maxDuration = 0;
 
   for (const task of tasks) {
@@ -574,8 +587,9 @@ export function buildTaskIndex(tasks: GanttTask[]): TaskIndex {
     maxDuration = Math.max(maxDuration, task.end - task.start);
   }
 
-  const rows = Array.from({ length: maxRow + 1 }, () => [] as GanttTask[]);
-  const rowMaxDuration = Array.from({ length: maxRow + 1 }, () => 0);
+  const rowCount = Math.max(rowCountHint, maxRow + 1);
+  const rows = Array.from({ length: rowCount }, () => [] as GanttTask[]);
+  const rowMaxDuration = Array.from({ length: rowCount }, () => 0);
 
   for (const task of tasks) {
     rows[task.rowIndex].push(task);
@@ -598,7 +612,7 @@ export function buildTaskIndex(tasks: GanttTask[]): TaskIndex {
     rows,
     byId,
     rowMaxDuration,
-    rowCount: rows.length,
+    rowCount,
     maxDuration,
   };
 }
@@ -613,6 +627,10 @@ export function computeVisibleRowRange(
   rowCount: number,
   overscanRows = 2,
 ): { start: number; end: number } {
+  if (rowCount <= 0) {
+    return { start: 0, end: -1 };
+  }
+
   const start = clamp(
     Math.floor(camera.scrollY / rowPitch) - overscanRows,
     0,
@@ -919,6 +937,173 @@ function taskFillColor(
     clamp(b * boost, 0, 1),
     a * alpha,
   ];
+}
+
+function mixColor(left: GanttColor, right: GanttColor, amount: number): GanttColor {
+  const t = clamp(amount, 0, 1);
+  return [
+    left[0] + (right[0] - left[0]) * t,
+    left[1] + (right[1] - left[1]) * t,
+    left[2] + (right[2] - left[2]) * t,
+    left[3] + (right[3] - left[3]) * t,
+  ];
+}
+
+function appendTaskPrimitive(
+  solids: SolidInstanceWriter,
+  task: GanttTask,
+  options: Pick<FrameOptions, 'rowPitch' | 'barHeight' | 'milestoneSize'>,
+  fill: GanttColor,
+  emphasis: number,
+  radiusPx: number,
+): void {
+  const rowY = task.rowIndex * options.rowPitch;
+  const laneY = rowY + (options.rowPitch - options.barHeight) * 0.5;
+
+  if (task.milestone) {
+    const size = options.milestoneSize;
+    const centerX = task.start;
+    const centerY = laneY + options.barHeight * 0.5;
+    solids.appendRect(
+      centerX - size * 0.5,
+      centerY - size * 0.5,
+      size,
+      size,
+      fill[0],
+      fill[1],
+      fill[2],
+      fill[3],
+      1,
+      emphasis,
+      0,
+    );
+    return;
+  }
+
+  const rect = taskWorldRect(task, options.rowPitch, options.barHeight);
+  solids.appendRect(
+    rect.x,
+    rect.y,
+    rect.w,
+    rect.h,
+    fill[0],
+    fill[1],
+    fill[2],
+    fill[3],
+    0,
+    emphasis,
+    radiusPx,
+  );
+}
+
+function appendRectOutline(
+  solids: SolidInstanceWriter,
+  camera: CameraState,
+  rect: { x: number; y: number; w: number; h: number },
+  color: GanttColor,
+  thicknessPx: number,
+  radiusPx: number,
+): void {
+  const xThickness = Math.max(1 / camera.zoomX, thicknessPx / camera.zoomX);
+  const yThickness = Math.max(1 / camera.zoomY, thicknessPx / camera.zoomY);
+  const horizontalRadius = Math.max(0, radiusPx);
+
+  solids.appendRect(
+    rect.x - xThickness,
+    rect.y - yThickness,
+    rect.w + xThickness * 2,
+    yThickness,
+    color[0],
+    color[1],
+    color[2],
+    color[3],
+    0,
+    0.55,
+    horizontalRadius,
+  );
+  solids.appendRect(
+    rect.x - xThickness,
+    rect.y + rect.h,
+    rect.w + xThickness * 2,
+    yThickness,
+    color[0],
+    color[1],
+    color[2],
+    color[3],
+    0,
+    0.55,
+    horizontalRadius,
+  );
+  solids.appendRect(
+    rect.x - xThickness,
+    rect.y,
+    xThickness,
+    rect.h,
+    color[0],
+    color[1],
+    color[2],
+    color[3],
+    0,
+    0.55,
+    horizontalRadius,
+  );
+  solids.appendRect(
+    rect.x + rect.w,
+    rect.y,
+    xThickness,
+    rect.h,
+    color[0],
+    color[1],
+    color[2],
+    color[3],
+    0,
+    0.55,
+    horizontalRadius,
+  );
+}
+
+function appendResizeHandles(
+  solids: SolidInstanceWriter,
+  camera: CameraState,
+  rect: { x: number; y: number; w: number; h: number },
+  color: GanttColor,
+  handleWidthPx: number,
+  radiusPx: number,
+): void {
+  const handleWidth = Math.max(
+    3 / camera.zoomX,
+    Math.min(handleWidthPx / camera.zoomX, rect.w * 0.45),
+  );
+  if (handleWidth <= 0) {
+    return;
+  }
+
+  solids.appendRect(
+    rect.x,
+    rect.y,
+    handleWidth,
+    rect.h,
+    color[0],
+    color[1],
+    color[2],
+    color[3],
+    0,
+    0.75,
+    radiusPx,
+  );
+  solids.appendRect(
+    rect.x + rect.w - handleWidth,
+    rect.y,
+    handleWidth,
+    rect.h,
+    color[0],
+    color[1],
+    color[2],
+    color[3],
+    0,
+    0.75,
+    radiusPx,
+  );
 }
 
 function lineIntersectsViewport(
@@ -1332,6 +1517,11 @@ export function buildFrame(
   display: NormalizedGanttDisplayConfig = DEFAULT_DISPLAY_OPTIONS,
 ): FrameScene {
   const config = { ...DEFAULT_OPTIONS, ...options };
+  const activeEdit = renderState.activeEdit ?? null;
+  const editAffordances = renderState.editAffordances;
+  const showEditAffordances =
+    renderState.interactionMode === 'edit' && editAffordances?.enabled === true;
+  const dropTargetRowIndex = activeEdit?.draftTask.rowIndex ?? null;
   const baseFontPx = Math.max(1, Math.round(font.sizePx ?? 12));
   const backgroundSolids = new SolidInstanceWriter(
     Math.max(1024, index.rowCount * 4),
@@ -1415,6 +1605,21 @@ export function buildFrame(
       0,
       0,
     );
+    if (showEditAffordances && dropTargetRowIndex === row) {
+      const highlight = mixColor([r, g, b, a], [0.4, 0.74, 0.96, 0.22], 0.6);
+      backgroundSolids.appendRect(
+        window.start,
+        rowY,
+        window.end - window.start,
+        config.rowPitch,
+        highlight[0],
+        highlight[1],
+        highlight[2],
+        highlight[3],
+        0,
+        0.25,
+      );
+    }
     appendStyledVisibleLine(
       backgroundLines,
       camera,
@@ -1430,7 +1635,7 @@ export function buildFrame(
       0,
     );
 
-    const rowTasks = index.rows[row];
+    const rowTasks = index.rows[row] ?? [];
     if (rowTasks.length === 0) {
       continue;
     }
@@ -1594,7 +1799,51 @@ export function buildFrame(
           }
         }
       }
+
+      if (showEditAffordances && selected) {
+        const rect = taskWorldRect(task, config.rowPitch, config.barHeight);
+        const outlineColor = mixColor(fill, [1, 1, 1, 1], 0.42);
+        appendRectOutline(
+          foregroundSolids,
+          camera,
+          rect,
+          [outlineColor[0], outlineColor[1], outlineColor[2], 0.92],
+          activeEdit?.taskId === task.id ? 3 : 2,
+          display.tasks.barRadiusPx,
+        );
+
+        if (!task.milestone && editAffordances?.resizeEnabled) {
+          const handleColor = mixColor(fill, [1, 1, 1, 1], 0.55);
+          appendResizeHandles(
+            foregroundSolids,
+            camera,
+            rect,
+            [handleColor[0], handleColor[1], handleColor[2], 0.96],
+            editAffordances.handleWidthPx,
+            display.tasks.barRadiusPx,
+          );
+        }
+      }
     }
+  }
+
+  if (showEditAffordances && activeEdit) {
+    const ghostBase = taskFillColor(
+      activeEdit.originalTask,
+      renderState.selectedTaskId,
+      renderState.hoveredTaskId,
+      display.tasks,
+    );
+    const ghostFill = mixColor(ghostBase, [1, 1, 1, 0.18], 0.24);
+    ghostFill[3] = 0.18;
+    appendTaskPrimitive(
+      foregroundSolids,
+      activeEdit.originalTask,
+      config,
+      ghostFill,
+      0.08,
+      display.tasks.barRadiusPx,
+    );
   }
 
   foregroundSolids.appendRect(

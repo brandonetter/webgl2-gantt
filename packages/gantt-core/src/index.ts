@@ -1,5 +1,6 @@
 export * from './core';
 export * from './data';
+export * from './edit';
 export * from './font';
 export * from './render';
 export * from './types';
