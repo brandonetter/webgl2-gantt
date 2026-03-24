@@ -1,4 +1,4 @@
-import { buildFrame, buildTaskIndex, createCamera } from '@gantt/gantt-core';
+import { buildFrame, buildTaskIndex, createCamera, pickTaskAtPoint } from '@gantt/gantt-core';
 import { TextLayoutEngine } from '@gantt/gantt-core';
 import { makeTestAtlas } from './helpers';
 
@@ -160,6 +160,62 @@ describe('frame assembly', () => {
 
     expect(frame.stats.visibleDependencies).toBe(2);
     expect(frame.dependencyPaths.map((path) => path.id).sort()).toEqual(['a->c', 'b->c']);
+  });
+
+  it('keeps one-day task connectors and picking aligned with the rendered min width', () => {
+    const atlas = makeTestAtlas();
+    const layout = new TextLayoutEngine(atlas);
+    const scene = {
+      rowLabels: ['Row 1', 'Row 2'],
+      timelineStart: 0,
+      timelineEnd: 20,
+      tasks: [
+        { id: 'a', rowIndex: 0, start: 3, end: 4, label: 'A' },
+        { id: 'b', rowIndex: 1, start: 6, end: 8, label: 'B', dependencies: ['a'] },
+      ],
+    };
+    const index = buildTaskIndex(scene.tasks);
+    const camera = {
+      ...createCamera(800, 240),
+      zoomX: 100,
+      zoomY: 1,
+      scrollX: 0,
+      scrollY: 0,
+    };
+
+    const frame = buildFrame(
+      scene,
+      index,
+      camera,
+      atlas,
+      layout,
+      {
+        selectedTaskId: null,
+        hoveredTaskId: null,
+        selectedDependencyId: null,
+        hoveredDependencyId: null,
+      },
+      {
+        rowPitch: 30,
+        barHeight: 16,
+        milestoneSize: 12,
+        rowPadding: 7,
+        labelPadding: 8,
+        gridPadding: 0,
+        overscanRows: 1,
+        overscanPx: 80,
+        renderSelectedDependencies: true,
+      },
+    );
+
+    expect(frame.dependencyPaths[0]?.segments[0]?.x1).toBeCloseTo(4);
+
+    const pickedOnRightHalf = pickTaskAtPoint(scene, index, camera, 495, 15, {
+      rowPitch: 30,
+      barHeight: 16,
+    });
+
+    expect(pickedOnRightHalf?.id).toBe('a');
   });
 
   it('fades task label glyph alpha under the header and keeps fully above labels dimmed', () => {

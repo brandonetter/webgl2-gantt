@@ -601,7 +601,7 @@ export function taskWorldRect(
   return {
     x: task.start,
     y: rowY + (rowPitch - barHeight) * 0.5,
-    w: Math.max(1, task.end - task.start),
+    w: task.milestone ? Math.max(1, task.end - task.start) : Math.max(2, task.end - task.start),
     h: task.milestone ? Math.min(barHeight, 12) : barHeight,
   };
 }
@@ -1238,13 +1238,12 @@ export function buildFrame(
           emphasis,
         );
       } else {
-        const x = task.start;
-        const w = Math.max(2, task.end - task.start);
+        const rect = taskWorldRect(task, config.rowPitch, config.barHeight);
         foregroundSolids.appendRect(
-          x,
-          laneY,
-          w,
-          config.barHeight,
+          rect.x,
+          rect.y,
+          rect.w,
+          rect.h,
           fill[0],
           fill[1],
           fill[2],
@@ -1254,10 +1253,10 @@ export function buildFrame(
         );
 
         if (labelTier.enabled) {
-          const screenX = (x - camera.scrollX) * camera.zoomX;
-          const screenY = (laneY - camera.scrollY) * camera.zoomY;
-          const screenW = w * camera.zoomX;
-          const screenH = config.barHeight * camera.zoomY;
+          const screenX = (rect.x - camera.scrollX) * camera.zoomX;
+          const screenY = (rect.y - camera.scrollY) * camera.zoomY;
+          const screenW = rect.w * camera.zoomX;
+          const screenH = rect.h * camera.zoomY;
           const scale = labelTier.fontPx / atlas.lineHeight;
           const textBoxHeight = (atlas.ascender + atlas.descender) * scale;
           const baseline =
