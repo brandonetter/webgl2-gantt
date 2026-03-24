@@ -58,12 +58,15 @@ type ZoomPreset = {
 };
 
 const ZOOM_PRESETS: ZoomPreset[] = [
-  { id: 'day', label: 'Day', visibleDays: 2 },
-  { id: 'week', label: 'Week', visibleDays: 10 },
-  { id: 'month', label: 'Month', visibleDays: 35 },
-  { id: 'quarter', label: 'Quarter', visibleDays: 110 },
-  { id: 'year', label: 'Year', visibleDays: 370 },
+  { id: 'day', label: 'Day', visibleDays: 1 },
+  { id: 'week', label: 'Week', visibleDays: 7 },
+  { id: 'month', label: 'Month', visibleDays: 28 },
+  { id: 'quarter', label: 'Quarter', visibleDays: 84 },
+  { id: 'year', label: 'Year', visibleDays: 336 },
 ];
+
+const DEFAULT_HOME_VISIBLE_DAYS = 28;
+const DEFAULT_HOME_LEAD_DAYS = 3;
 
 function createElement<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -253,12 +256,7 @@ function findClosestZoomPreset(visibleDays: number): string | null {
   return bestDistance <= 0.32 ? closest?.id ?? null : null;
 }
 
-function resolvePresetZoomX(boundsWidthDays: number, availableWidthPx: number, viewportWidth: number): number {
-  const requiredVisibleDays = Math.max(boundsWidthDays, (viewportWidth * boundsWidthDays) / Math.max(1, availableWidthPx));
-  const fittingPreset = ZOOM_PRESETS.find((preset) => preset.visibleDays >= requiredVisibleDays);
-  if (fittingPreset) {
-    return viewportWidth / fittingPreset.visibleDays;
-  }
+function resolvePresetZoomX(boundsWidthDays: number, availableWidthPx: number): number {
   return availableWidthPx / Math.max(1, boundsWidthDays);
 }
 
@@ -271,8 +269,9 @@ function createHostCameraState(
 ): CameraState {
   return {
     ...createCamera(viewportWidth, viewportHeight),
-    scrollX: hasTasks ? timelineStart - 21 : 0,
+    scrollX: hasTasks ? timelineStart - DEFAULT_HOME_LEAD_DAYS : 0,
     scrollY: -headerHeight,
+    zoomX: clamp(viewportWidth / DEFAULT_HOME_VISIBLE_DAYS, 0.15, 768),
   };
 }
 
@@ -428,6 +427,13 @@ class GanttHostImpl implements GanttHostController {
     await this.pluginRuntime.init();
 
     this.syncCanvasSize();
+    this.camera = createHostCameraState(
+      this.camera.viewportWidth,
+      this.camera.viewportHeight,
+      this.config.render.headerHeight,
+      this.scene.timelineStart,
+      this.scene.tasks.length > 0,
+    );
     this.requestRender();
   }
 
@@ -774,7 +780,7 @@ class GanttHostImpl implements GanttHostController {
     const boundsWidth = Math.max(1, maxX - minX);
     const horizontalMarginPx = Math.min(220, Math.max(72, this.camera.viewportWidth * 0.14));
     const availableWidthPx = Math.max(120, this.camera.viewportWidth - horizontalMarginPx * 2);
-    const targetZoomX = resolvePresetZoomX(boundsWidth, availableWidthPx, this.camera.viewportWidth);
+    const targetZoomX = resolvePresetZoomX(boundsWidth, availableWidthPx);
     const bodyCenterScreenX = this.camera.viewportWidth * 0.5;
     const bodyCenterScreenY = this.config.render.headerHeight + Math.max(0, this.camera.viewportHeight - this.config.render.headerHeight) * 0.5;
     const startCamera = { ...this.camera };

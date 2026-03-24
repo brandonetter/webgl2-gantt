@@ -4,9 +4,9 @@ describe('config normalization', () => {
   it('applies defaults that match the legacy runtime behavior', () => {
     const config = normalizeConfig({});
 
-    expect(config.render.rowPitch).toBe(30);
-    expect(config.render.barHeight).toBe(16);
-    expect(config.render.headerHeight).toBe(42);
+    expect(config.render.rowPitch).toBe(28);
+    expect(config.render.barHeight).toBe(14);
+    expect(config.render.headerHeight).toBe(36);
     expect(config.ui.showHud).toBe(true);
     expect(config.ui.showInspector).toBe(true);
     expect(config.ui.showToolbar).toBe(true);
@@ -43,7 +43,7 @@ describe('config normalization', () => {
     expect(config.ui.showHud).toBe(false);
     expect(config.ui.showInspector).toBe(true);
     expect(config.render.rowPitch).toBe(44);
-    expect(config.render.barHeight).toBe(16);
+    expect(config.render.barHeight).toBe(14);
     expect(config.container.width).toBe(800);
     expect(config.container.height).toBe(300);
     expect(config.container.footer.visible).toBe(true);

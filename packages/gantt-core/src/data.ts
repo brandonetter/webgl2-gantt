@@ -5,7 +5,7 @@ export type SampleOptions = {
   orderCount?: number;
 };
 
-type OrderProfile = 'fast-turn' | 'standard' | 'extended';
+type OrderProfile = 'rapid' | 'standard' | 'complex';
 
 type WorkflowStep = {
   label: string;
@@ -14,8 +14,71 @@ type WorkflowStep = {
   minLag: number;
   maxLag: number;
   skipChance?: number;
-  variance?: number;
+  longTailChance?: number;
+  longTailMaxDuration?: number;
 };
+
+type ProfileTuning = {
+  durationScaleMin: number;
+  durationScaleMax: number;
+  mediumDurationChance: number;
+  longTailBias: number;
+  lagScaleMin: number;
+  lagScaleMax: number;
+  optionalSkipBias: number;
+  secondaryDependencyChance: number;
+};
+
+const MAX_TASK_DURATION_DAYS = 60;
+const SHORT_TASK_MAX_DAYS = 14;
+
+const PROFILE_TUNING: Record<OrderProfile, ProfileTuning> = {
+  rapid: {
+    durationScaleMin: 0.7,
+    durationScaleMax: 0.95,
+    mediumDurationChance: 0.08,
+    longTailBias: 0.4,
+    lagScaleMin: 0.35,
+    lagScaleMax: 0.8,
+    optionalSkipBias: 1.15,
+    secondaryDependencyChance: 0.06,
+  },
+  standard: {
+    durationScaleMin: 0.85,
+    durationScaleMax: 1.1,
+    mediumDurationChance: 0.16,
+    longTailBias: 0.9,
+    lagScaleMin: 0.55,
+    lagScaleMax: 1,
+    optionalSkipBias: 1,
+    secondaryDependencyChance: 0.1,
+  },
+  complex: {
+    durationScaleMin: 0.95,
+    durationScaleMax: 1.3,
+    mediumDurationChance: 0.24,
+    longTailBias: 1.35,
+    lagScaleMin: 0.75,
+    lagScaleMax: 1.2,
+    optionalSkipBias: 0.82,
+    secondaryDependencyChance: 0.18,
+  },
+};
+
+const WORKFLOW: WorkflowStep[] = [
+  { label: 'Intake', minDuration: 1, maxDuration: 3, minLag: 0, maxLag: 1 },
+  { label: 'Scope Check', minDuration: 1, maxDuration: 4, minLag: 0, maxLag: 1 },
+  { label: 'Estimate', minDuration: 2, maxDuration: 5, minLag: 0, maxLag: 2 },
+  { label: 'Client Reply', minDuration: 1, maxDuration: 4, minLag: 0, maxLag: 2, skipChance: 0.12 },
+  { label: 'Schedule', minDuration: 1, maxDuration: 3, minLag: 0, maxLag: 2 },
+  { label: 'Parts Hold', minDuration: 7, maxDuration: 18, minLag: 0, maxLag: 2, skipChance: 0.88, longTailChance: 0.22, longTailMaxDuration: 60 },
+  { label: 'Prep', minDuration: 1, maxDuration: 5, minLag: 0, maxLag: 2 },
+  { label: 'Execution', minDuration: 2, maxDuration: 10, minLag: 0, maxLag: 3, longTailChance: 0.06, longTailMaxDuration: 45 },
+  { label: 'Touch-up', minDuration: 1, maxDuration: 4, minLag: 0, maxLag: 1, skipChance: 0.28 },
+  { label: 'QA', minDuration: 1, maxDuration: 3, minLag: 0, maxLag: 1 },
+  { label: 'Delivery', minDuration: 1, maxDuration: 5, minLag: 0, maxLag: 2, skipChance: 0.14, longTailChance: 0.03, longTailMaxDuration: 28 },
+  { label: 'Closeout', minDuration: 1, maxDuration: 2, minLag: 0, maxLag: 1 },
+];
 
 function mulberry32(seed: number): () => number {
   let t = seed >>> 0;
@@ -31,76 +94,51 @@ function jitter(rng: () => number, min: number, max: number): number {
   return Math.round(min + rng() * (max - min));
 }
 
-const WORKFLOW: WorkflowStep[] = [
-  { label: 'New', minDuration: 7, maxDuration: 28, minLag: 0, maxLag: 2, variance: 0.9 },
-  { label: 'Intake Review', minDuration: 10, maxDuration: 35, minLag: 1, maxLag: 4, variance: 0.85 },
-  { label: 'Documentation Review', minDuration: 7, maxDuration: 42, minLag: 1, maxLag: 4, variance: 0.95 },
-  { label: 'Scope Validation', minDuration: 14, maxDuration: 56, minLag: 1, maxLag: 5, variance: 0.9 },
-  { label: 'Estimate Build', minDuration: 10, maxDuration: 42, minLag: 1, maxLag: 5, variance: 0.8 },
-  { label: 'Quote', minDuration: 14, maxDuration: 70, minLag: 1, maxLag: 7, variance: 0.8 },
-  { label: 'Commercial Review', minDuration: 7, maxDuration: 28, minLag: 1, maxLag: 5, variance: 0.7, skipChance: 0.28 },
-  { label: 'Quote Revision', minDuration: 14, maxDuration: 63, minLag: 1, maxLag: 8, skipChance: 0.45, variance: 0.95 },
-  { label: 'Client Confirmation', minDuration: 14, maxDuration: 49, minLag: 1, maxLag: 6, variance: 0.75 },
-  { label: 'Procurement Planning', minDuration: 14, maxDuration: 56, minLag: 1, maxLag: 6, variance: 0.8 },
-  { label: 'Capacity Reservation', minDuration: 21, maxDuration: 84, minLag: 1, maxLag: 8, variance: 0.85 },
-  { label: 'Scheduled', minDuration: 28, maxDuration: 120, minLag: 1, maxLag: 10, variance: 0.9 },
-  { label: 'Material Allocation', minDuration: 14, maxDuration: 70, minLag: 1, maxLag: 7, variance: 0.85, skipChance: 0.22 },
-  { label: 'Production Prep', minDuration: 21, maxDuration: 84, minLag: 1, maxLag: 8, variance: 0.9 },
-  { label: 'Production', minDuration: 35, maxDuration: 240, minLag: 2, maxLag: 14, variance: 1.0 },
-  { label: 'Assembly', minDuration: 21, maxDuration: 120, minLag: 1, maxLag: 8, variance: 0.85, skipChance: 0.25 },
-  { label: 'Quality Check', minDuration: 14, maxDuration: 56, minLag: 0, maxLag: 5, skipChance: 0.2, variance: 0.7 },
-  { label: 'Packaging', minDuration: 7, maxDuration: 28, minLag: 0, maxLag: 4, variance: 0.55 },
-  { label: 'Dispatch Planning', minDuration: 14, maxDuration: 42, minLag: 0, maxLag: 4, variance: 0.65 },
-  { label: 'Shipment Booking', minDuration: 7, maxDuration: 35, minLag: 0, maxLag: 4, variance: 0.6 },
-  { label: 'In Transit', minDuration: 21, maxDuration: 120, minLag: 1, maxLag: 5, variance: 0.85 },
-  { label: 'Delivery Confirmation', minDuration: 7, maxDuration: 28, minLag: 0, maxLag: 3, variance: 0.5 },
-  { label: 'Completed', minDuration: 7, maxDuration: 21, minLag: 0, maxLag: 3, variance: 0.45 },
-];
-
-function sampleDuration(
-  rng: () => number,
-  step: WorkflowStep,
-  orderScale: number,
-  volatility: number,
-  profile: OrderProfile,
-): number {
-  const base = jitter(rng, step.minDuration, step.maxDuration);
-  const variance = step.variance ?? 0.5;
-  const localSwing = 0.65 + rng() * variance;
-  const openingBoost =
-    step.label === 'New'
-      ? rng() < 0.22
-        ? 2.2 + rng() * 3.2
-        : 0.95 + rng() * 1.6
-      : 1;
-  const outlierBoost =
-    rng() < 0.1
-      ? 1.8 + rng() * 2.8
-      : rng() < 0.28
-        ? 1.15 + rng() * 0.9
-        : 1;
-  const rawDuration = Math.round(base * orderScale * volatility * localSwing * openingBoost * outlierBoost);
-
-  if (profile === 'fast-turn') {
-    const fastTurnDuration =
-      rng() < 0.78
-        ? jitter(rng, 1, 7)
-        : rng() < 0.93
-          ? jitter(rng, 7, 14)
-          : jitter(rng, 14, 28);
-    return Math.max(1, Math.min(28, Math.min(rawDuration, fastTurnDuration)));
+function sampleProfile(rng: () => number): OrderProfile {
+  const roll = rng();
+  if (roll < 0.48) {
+    return 'rapid';
   }
-
-  return Math.max(7, Math.min(365, rawDuration));
+  if (roll < 0.9) {
+    return 'standard';
+  }
+  return 'complex';
 }
 
-function sampleLag(rng: () => number, minLag: number, maxLag: number, orderScale: number, profile: OrderProfile): number {
-  if (profile === 'fast-turn') {
-    return rng() < 0.72 ? 0 : jitter(rng, 0, Math.max(1, Math.min(2, maxLag)));
+function sampleDuration(rng: () => number, step: WorkflowStep, profile: OrderProfile): number {
+  const tuning = PROFILE_TUNING[profile];
+  const baseDuration = jitter(rng, step.minDuration, step.maxDuration);
+  const scale = tuning.durationScaleMin + rng() * (tuning.durationScaleMax - tuning.durationScaleMin);
+  let duration = Math.max(1, Math.round(baseDuration * scale));
+
+  if (duration < SHORT_TASK_MAX_DAYS - 2 && rng() < tuning.mediumDurationChance) {
+    duration = Math.max(duration, jitter(rng, 8, SHORT_TASK_MAX_DAYS));
   }
-  const baseLag = jitter(rng, minLag, maxLag);
-  const lagScale = rng() < 0.18 ? 1.5 + rng() * 2.5 : 0.8 + rng() * 0.8;
-  return Math.max(0, Math.round(baseLag * Math.max(0.85, orderScale * 0.75) * lagScale));
+
+  const longTailChance = Math.min(0.35, (step.longTailChance ?? 0) * tuning.longTailBias);
+  if (longTailChance > 0 && rng() < longTailChance) {
+    const tailMax = Math.min(MAX_TASK_DURATION_DAYS, step.longTailMaxDuration ?? 28);
+    const tailMin = Math.min(tailMax, Math.max(15, duration + jitter(rng, 4, 10)));
+    duration = jitter(rng, tailMin, tailMax);
+  }
+
+  return Math.max(1, Math.min(MAX_TASK_DURATION_DAYS, duration));
+}
+
+function sampleLag(rng: () => number, step: WorkflowStep, profile: OrderProfile): number {
+  const tuning = PROFILE_TUNING[profile];
+  const baseLag = jitter(rng, step.minLag, step.maxLag);
+  const scale = tuning.lagScaleMin + rng() * (tuning.lagScaleMax - tuning.lagScaleMin);
+  return Math.max(0, Math.min(6, Math.round(baseLag * scale)));
+}
+
+function shouldSkipStep(rng: () => number, step: WorkflowStep, profile: OrderProfile): boolean {
+  if (step.skipChance === undefined) {
+    return false;
+  }
+  const tuning = PROFILE_TUNING[profile];
+  const skipChance = Math.min(0.96, step.skipChance * tuning.optionalSkipBias);
+  return rng() < skipChance;
 }
 
 function buildOrderNumber(index: number): string {
@@ -118,10 +156,10 @@ function buildDependencies(
   }
 
   const dependencies = [previousTaskId];
-  const canAddSecondary = profile !== 'fast-turn' && recentTaskIds.length >= 3 && rng() < 0.22;
+  const secondaryDependencyChance = PROFILE_TUNING[profile].secondaryDependencyChance;
 
-  if (canAddSecondary) {
-    const maxOffset = Math.min(5, recentTaskIds.length);
+  if (recentTaskIds.length >= 3 && rng() < secondaryDependencyChance) {
+    const maxOffset = Math.min(4, recentTaskIds.length);
     const offset = jitter(rng, 2, maxOffset);
     const secondary = recentTaskIds[recentTaskIds.length - offset];
     if (secondary && secondary !== previousTaskId) {
@@ -146,33 +184,19 @@ export function createSampleScene(options: SampleOptions = {}): GanttScene {
 
   for (let orderIndex = 0; orderIndex < orderCount; orderIndex += 1) {
     const orderNumber = buildOrderNumber(orderIndex);
-    const chainLengthBias = rng();
-    const profile: OrderProfile =
-      rng() < 0.18
-        ? 'fast-turn'
-        : rng() < 0.34
-          ? 'extended'
-          : 'standard';
-    const orderScale =
-      profile === 'fast-turn'
-        ? 0.18 + rng() * 0.18
-        : profile === 'extended'
-          ? 1.7 + rng() * 1.2
-          : 0.8 + rng() * 0.85;
-    let cursorDays = orderIndex * jitter(rng, 12, 36) + jitter(rng, 0, 48);
+    const profile = sampleProfile(rng);
+    let cursorDays = orderIndex * jitter(rng, 2, 5) + jitter(rng, 0, 10);
     let previousTaskId: string | null = null;
     const recentTaskIds: string[] = [];
     let visibleStepNumber = 1;
 
-    for (let stepIndex = 0; stepIndex < WORKFLOW.length; stepIndex += 1) {
-      const step = WORKFLOW[stepIndex];
-      if (step.skipChance !== undefined && chainLengthBias < step.skipChance * 0.55 && rng() < step.skipChance) {
+    for (const step of WORKFLOW) {
+      if (shouldSkipStep(rng, step, profile)) {
         continue;
       }
 
-      const volatility = profile === 'fast-turn' ? 0.55 + rng() * 0.35 : 0.85 + rng() * 0.9;
-      cursorDays += sampleLag(rng, step.minLag, step.maxLag, orderScale, profile);
-      const duration = sampleDuration(rng, step, orderScale, volatility, profile);
+      cursorDays += sampleLag(rng, step, profile);
+      const duration = sampleDuration(rng, step, profile);
       const start = baseDay + cursorDays;
       const end = start + duration;
       const id = `task-${taskOrdinal}`;
@@ -196,38 +220,6 @@ export function createSampleScene(options: SampleOptions = {}): GanttScene {
       cursorDays = end - baseDay;
       timelineStart = Math.min(timelineStart, start);
       timelineEnd = Math.max(timelineEnd, end);
-
-      if (step.label === 'Scheduled' && profile !== 'fast-turn' && rng() < 0.28) {
-        const holdStart = end + sampleLag(rng, 1, 8, orderScale, profile);
-        const holdDurationBase =
-          rng() < 0.22
-            ? jitter(rng, 180, 365)
-            : rng() < 0.55
-              ? jitter(rng, 84, 220)
-              : jitter(rng, 14, 98);
-        const holdDuration = Math.max(7, Math.min(365, Math.round(holdDurationBase * Math.max(0.9, orderScale * (0.85 + rng() * 0.7)))));
-        const holdId = `task-${taskOrdinal}`;
-        const holdLabel = `${orderNumber} | #${visibleStepNumber} Hold`;
-
-        tasks.push({
-          id: holdId,
-          rowIndex,
-          start: holdStart,
-          end: holdStart + holdDuration,
-          label: holdLabel,
-          dependencies: buildDependencies(rng, profile, previousTaskId, recentTaskIds),
-        });
-
-        rowLabels.push(holdLabel);
-        previousTaskId = holdId;
-        recentTaskIds.push(holdId);
-        visibleStepNumber += 1;
-        taskOrdinal += 1;
-        rowIndex += 1;
-        cursorDays = holdStart + holdDuration - baseDay;
-        timelineStart = Math.min(timelineStart, holdStart);
-        timelineEnd = Math.max(timelineEnd, holdStart + holdDuration);
-      }
     }
   }
 

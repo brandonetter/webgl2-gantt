@@ -114,15 +114,15 @@ export type FrameOptions = {
 };
 
 const DEFAULT_OPTIONS: FrameOptions = {
-  rowPitch: 30,
-  barHeight: 16,
-  milestoneSize: 12,
-  headerHeight: 40,
-  rowPadding: 7,
-  labelPadding: 7,
+  rowPitch: 28,
+  barHeight: 14,
+  milestoneSize: 10,
+  headerHeight: 36,
+  rowPadding: 6,
+  labelPadding: 6,
   gridPadding: 0,
   overscanRows: 2,
-  overscanPx: 220,
+  overscanPx: 180,
   renderSelectedDependencies: true,
 };
 
@@ -419,31 +419,34 @@ export function computeVisibleTimeWindow(camera: CameraState, overscanPx = 220):
 }
 
 export function chooseLabelTier(zoomX: number): LabelTier {
-  if (zoomX < 0.55) {
+  if (zoomX < 0.4) {
     return { enabled: false, fontPx: 0, minBarWidth: Number.POSITIVE_INFINITY };
   }
 
   if (zoomX < 0.9) {
-    return { enabled: true, fontPx: 16, minBarWidth: 84 };
+    return { enabled: true, fontPx: 11, minBarWidth: 48 };
   }
 
-  if (zoomX < 1.4) {
-    return { enabled: true, fontPx: 19, minBarWidth: 74 };
+  if (zoomX < 1.8) {
+    return { enabled: true, fontPx: 12, minBarWidth: 40 };
   }
 
-  if (zoomX < 2.2) {
-    return { enabled: true, fontPx: 22, minBarWidth: 66 };
+  if (zoomX < 4) {
+    return { enabled: true, fontPx: 13, minBarWidth: 34 };
   }
 
-  return { enabled: true, fontPx: 24, minBarWidth: 60 };
+  return { enabled: true, fontPx: 14, minBarWidth: 28 };
 }
 
 const TIME_AXIS_STEPS: TimeAxisStep[] = [
   { unit: 'day', count: 1, approxDays: 1 },
   { unit: 'day', count: 2, approxDays: 2 },
+  { unit: 'day', count: 3, approxDays: 3 },
+  { unit: 'day', count: 5, approxDays: 5 },
   { unit: 'day', count: 7, approxDays: 7 },
   { unit: 'day', count: 14, approxDays: 14 },
   { unit: 'month', count: 1, approxDays: 30 },
+  { unit: 'month', count: 2, approxDays: 61 },
   { unit: 'month', count: 3, approxDays: 91 },
   { unit: 'month', count: 6, approxDays: 182 },
   { unit: 'year', count: 1, approxDays: 365 },
@@ -521,7 +524,7 @@ function formatTimeAxisLabel(daySerial: number, step: TimeAxisStep): string {
 }
 
 export function chooseGridStep(zoomX: number): TimeAxisStep {
-  const targetPx = 120;
+  const targetPx = 72;
   for (const candidate of TIME_AXIS_STEPS) {
     if (candidate.approxDays * zoomX >= targetPx) {
       return candidate;
@@ -913,7 +916,7 @@ export function buildFrame(
   const axisBackgroundColor: [number, number, number, number] = [0.05, 0.07, 0.1, 0.96];
   const axisBorderColor: [number, number, number, number] = [0.18, 0.22, 0.28, 0.96];
   const axisTickColor: [number, number, number, number] = [0.28, 0.34, 0.42, 0.8];
-  const axisFontPx = 13;
+  const axisFontPx = 12;
   const axisScale = axisFontPx / atlas.lineHeight;
   const axisTextHeight = (atlas.ascender + atlas.descender) * axisScale;
   const axisBaseline = (config.headerHeight - axisTextHeight) * 0.5 + atlas.ascender * axisScale;

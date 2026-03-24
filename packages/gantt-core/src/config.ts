@@ -26,15 +26,15 @@ export const DEFAULT_UI_CONFIG: Required<UiConfig> = {
 };
 
 export const DEFAULT_RENDER_OPTIONS: FrameOptions = {
-  rowPitch: 30,
-  barHeight: 16,
-  milestoneSize: 12,
-  headerHeight: 42,
-  rowPadding: 7,
-  labelPadding: 8,
+  rowPitch: 28,
+  barHeight: 14,
+  milestoneSize: 10,
+  headerHeight: 36,
+  rowPadding: 6,
+  labelPadding: 6,
   gridPadding: 0,
   overscanRows: 3,
-  overscanPx: 220,
+  overscanPx: 180,
   renderSelectedDependencies: true,
 };
 
