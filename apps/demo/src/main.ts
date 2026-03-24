@@ -1,5 +1,11 @@
 import './styles.css';
-import { createGanttHost, createSampleScene, type GanttConfig, type GanttHost, type GanttScene } from '@gantt/gantt-core';
+import {
+  createGanttHost,
+  createSampleScene,
+  type GanttConfig,
+  type GanttHost,
+  type GanttScene,
+} from '@gantt/gantt-core';
 
 const root = document.getElementById('app');
 
@@ -130,7 +136,10 @@ function buildPage(scene: GanttScene): string {
   `;
 }
 
-async function mountDemoHost(target: HTMLElement, config: GanttConfig): Promise<GanttHost> {
+async function mountDemoHost(
+  target: HTMLElement,
+  config: GanttConfig,
+): Promise<GanttHost> {
   const host = await createGanttHost(target, config);
   host.getController().animateToZoomPresetId('month');
   return host;
@@ -140,8 +149,12 @@ async function boot(): Promise<void> {
   const sharedScene = createSampleScene(SAMPLE_OPTIONS);
   root.innerHTML = buildPage(sharedScene);
 
-  const baselineMount = root.querySelector<HTMLElement>('[data-demo-mount="baseline"]');
-  const pluginMount = root.querySelector<HTMLElement>('[data-demo-mount="plugin"]');
+  const baselineMount = root.querySelector<HTMLElement>(
+    '[data-demo-mount="baseline"]',
+  );
+  const pluginMount = root.querySelector<HTMLElement>(
+    '[data-demo-mount="plugin"]',
+  );
 
   if (!baselineMount || !pluginMount) {
     throw new Error('Missing showcase mount points.');
@@ -154,6 +167,7 @@ async function boot(): Promise<void> {
     },
     font: {
       weight: 400,
+      sizePx: 14,
       msdfManifestUrls: demoMsdfManifestUrls(),
     },
     container: {
@@ -165,7 +179,8 @@ async function boot(): Promise<void> {
     ui: {
       title: 'Core only',
       showInspector: false,
-      statusText: 'Drag to pan, wheel to scroll, ctrl + wheel zooms time. Double-click a task to focus it.',
+      statusText:
+        'Drag to pan, wheel to scroll, ctrl + wheel zooms time. Double-click a task to focus it.',
     },
   };
 
@@ -187,7 +202,8 @@ async function boot(): Promise<void> {
     ui: {
       title: 'Safe plugin active',
       showInspector: false,
-      statusText: 'The plugin badge is rendered inside the chart host and updates from safe runtime hooks.',
+      statusText:
+        'The plugin badge is rendered inside the chart host and updates from safe runtime hooks.',
     },
     plugins: [
       {

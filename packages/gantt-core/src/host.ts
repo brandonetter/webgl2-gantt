@@ -538,6 +538,7 @@ class GanttHostImpl implements GanttHostController {
       this.layout,
       renderState,
       this.config.render,
+      this.config.font,
     );
 
     frame = await this.pluginRuntime.applyFrameHooks(frame);

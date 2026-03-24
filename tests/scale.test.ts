@@ -9,9 +9,16 @@ describe('short-task scale defaults', () => {
   });
 
   it('keeps label tiers compact enough for dense 1d-14d schedules', () => {
-    expect(chooseLabelTier(0.5)).toEqual({ enabled: true, fontPx: 11, minBarWidth: 48 });
-    expect(chooseLabelTier(1.2)).toEqual({ enabled: true, fontPx: 12, minBarWidth: 40 });
-    expect(chooseLabelTier(3)).toEqual({ enabled: true, fontPx: 13, minBarWidth: 34 });
-    expect(chooseLabelTier(12)).toEqual({ enabled: true, fontPx: 14, minBarWidth: 28 });
+    expect(chooseLabelTier(0.5)).toEqual({ enabled: true, fontPx: 12, minBarWidth: 48 });
+    expect(chooseLabelTier(1.2)).toEqual({ enabled: true, fontPx: 13, minBarWidth: 40 });
+    expect(chooseLabelTier(3)).toEqual({ enabled: true, fontPx: 14, minBarWidth: 34 });
+    expect(chooseLabelTier(12)).toEqual({ enabled: true, fontPx: 15, minBarWidth: 28 });
+  });
+
+  it('scales label tiers from an explicit chart font size', () => {
+    expect(chooseLabelTier(0.5, 16)).toEqual({ enabled: true, fontPx: 16, minBarWidth: 48 });
+    expect(chooseLabelTier(1.2, 16)).toEqual({ enabled: true, fontPx: 17, minBarWidth: 40 });
+    expect(chooseLabelTier(3, 16)).toEqual({ enabled: true, fontPx: 18, minBarWidth: 34 });
+    expect(chooseLabelTier(12, 16)).toEqual({ enabled: true, fontPx: 19, minBarWidth: 28 });
   });
 });

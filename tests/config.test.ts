@@ -11,6 +11,7 @@ describe('config normalization', () => {
     expect(config.ui.showInspector).toBe(true);
     expect(config.ui.showToolbar).toBe(true);
     expect(config.ui.showStatusLine).toBe(true);
+    expect(config.font.sizePx).toBe(12);
     expect(config.container.toolbar.position).toBe('top');
     expect(config.container.toolbar.height).toBe(56);
     expect(config.container.header.visible).toBe(false);
@@ -56,6 +57,7 @@ describe('config normalization', () => {
     const config = normalizeConfig({
       font: {
         family: 'Atkinson Hyperlegible',
+        sizePx: 16,
         weight: 700,
         msdfManifestUrls: {
           400: '/fonts/atkinson-hyperlegible-400-msdf.json',
@@ -65,6 +67,7 @@ describe('config normalization', () => {
     });
 
     expect(config.font.family).toBe('Atkinson Hyperlegible');
+    expect(config.font.sizePx).toBe(16);
     expect(config.font.weight).toBe(700);
     expect(config.font.msdfManifestUrls).toEqual({
       400: '/fonts/atkinson-hyperlegible-400-msdf.json',

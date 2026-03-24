@@ -55,6 +55,7 @@ export const DEFAULT_FEATURES: Required<GanttFeatureFlags> = {
 export const DEFAULT_PLUGIN_SECURITY_POLICY: PluginSecurityPolicy = {};
 export const DEFAULT_FONT_CONFIG: GanttFontConfig = {
   family: undefined,
+  sizePx: 12,
   weight: 600,
   msdfManifestUrl: undefined,
   msdfManifestUrls: undefined,
@@ -163,6 +164,7 @@ function mergePlugins(plugins: PluginConfig[] | undefined): PluginConfig[] {
 function mergeFontConfig(font: GanttFontConfig | undefined): GanttFontConfig {
   return {
     family: font?.family ?? DEFAULT_FONT_CONFIG.family,
+    sizePx: font?.sizePx ?? DEFAULT_FONT_CONFIG.sizePx,
     weight: font?.weight ?? DEFAULT_FONT_CONFIG.weight,
     msdfManifestUrl: font?.msdfManifestUrl ?? DEFAULT_FONT_CONFIG.msdfManifestUrl,
     msdfManifestUrls: font?.msdfManifestUrls ? { ...font.msdfManifestUrls } : DEFAULT_FONT_CONFIG.msdfManifestUrls,

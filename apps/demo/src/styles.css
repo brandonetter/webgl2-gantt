@@ -15,6 +15,10 @@
   box-sizing: border-box;
 }
 
+html {
+  font-size: 17px;
+}
+
 html,
 body {
   margin: 0;
@@ -56,7 +60,7 @@ code {
 .demo-eyebrow,
 .demo-card__eyebrow {
   margin: 0 0 14px;
-  font-size: 12px;
+  font-size: 13px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--accent-warm);
@@ -96,7 +100,7 @@ code {
 .demo-stat__label {
   display: block;
   margin-bottom: 10px;
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--muted);
@@ -289,7 +293,7 @@ code {
 
 .hud-title {
   margin-bottom: 10px;
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.15em;
   text-transform: uppercase;
   color: #66d1ff;
@@ -299,7 +303,7 @@ code {
   display: grid;
   grid-template-columns: max-content 1fr;
   gap: 5px 12px;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.35;
   color: #dce8f2;
 }
@@ -336,7 +340,7 @@ code {
   color: rgba(222, 232, 241, 0.72);
   padding: 8px 14px;
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.01em;
   line-height: 1;
@@ -376,7 +380,7 @@ code {
   border-radius: 16px;
   background: linear-gradient(180deg, rgba(10, 15, 23, 0.76), rgba(7, 10, 16, 0.88));
   color: rgba(221, 232, 242, 0.72);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.4;
 }
 
@@ -398,7 +402,7 @@ code {
 
 .plugin-badge__title {
   margin: 0 0 10px;
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--plugin-accent);
@@ -413,7 +417,7 @@ code {
 
 .plugin-badge__detail {
   margin: 8px 0 0;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.45;
   color: rgba(234, 244, 251, 0.76);
 }

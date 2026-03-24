@@ -181,6 +181,7 @@ export type GanttFontWeight = number | `${number}` | 'regular' | 'medium' | 'sem
 
 export type GanttFontConfig = {
   family?: string;
+  sizePx?: number;
   weight?: GanttFontWeight;
   msdfManifestUrl?: string;
   msdfManifestUrls?: Record<string, string>;
