@@ -1,6 +1,6 @@
 import { vi } from 'vitest';
 import { normalizeConfig } from '@gantt/gantt-core';
-import type { FrameScene, GanttScene, GanttPlugin } from '@gantt/gantt-core';
+import type { FrameScene, GanttExportedTask, GanttScene, GanttPlugin, GanttTask } from '@gantt/gantt-core';
 
 const loadPluginsMock = vi.hoisted(() => vi.fn());
 
@@ -25,6 +25,14 @@ function makeHostApi(configInput = {}) {
         registerModule: () => () => undefined,
         registerTaskEditResolver: () => () => undefined,
         getSceneSnapshot: () => ({ tasks: [], rowLabels: [], timelineStart: 0, timelineEnd: 0 }),
+        getTask: () => null,
+        getTasks: () => [] as GanttTask[],
+        addTask: () => ({ id: 'added', rowIndex: 0, start: 0, end: 1, label: 'Added Task' } as GanttTask),
+        updateTask: () => ({ id: 'updated', rowIndex: 0, start: 0, end: 1, label: 'Updated Task' } as GanttTask),
+        deleteTask: () => ({ id: 'deleted', rowIndex: 0, start: 0, end: 1, label: 'Deleted Task' } as GanttTask),
+        deleteTasks: () => [] as GanttTask[],
+        importTasks: () => ({ added: [], updated: [] }),
+        exportTasks: () => [] as GanttExportedTask[],
         getCameraSnapshot: () => ({ scrollX: 0, scrollY: 0, zoomX: 1, zoomY: 1, viewportWidth: 100, viewportHeight: 100 }),
         getInteractionState: () => ({ mode: 'view' as const, activeEdit: null }),
         setInteractionMode: () => undefined,
@@ -209,6 +217,78 @@ describe('plugin runtime', () => {
     expect(registerStyle).toHaveBeenCalledTimes(1);
     expect(registerOverlay).toHaveBeenCalledTimes(1);
     expect(advancedRender).toHaveBeenCalledTimes(1);
+  });
+
+  it('exposes runtime task read and mutation methods to safe plugins', async () => {
+    const getTasks = vi.fn(() => []);
+    const addTask = vi.fn(() => ({ id: 'task-1', rowIndex: 1, start: 10, end: 12, label: 'Task 1' }));
+    const updateTask = vi.fn(() => ({ id: 'task-1', rowIndex: 2, start: 10, end: 13, label: 'Task 1' }));
+    const deleteTask = vi.fn(() => ({ id: 'task-1', rowIndex: 2, start: 10, end: 13, label: 'Task 1' }));
+    const exportTasks = vi.fn(() => [{
+      id: 'task-1',
+      rowIndex: 2,
+      label: 'Task 1',
+      milestone: false,
+      dependencies: [],
+      startDate: '2026-01-10',
+      endDate: '2026-01-12',
+      durationDays: 3,
+    }]);
+
+    const runtimePlugin: GanttPlugin = {
+      meta: {
+        id: 'runtime-safe-plugin',
+        version: '1.2.0',
+        apiRange: '^1.2.0',
+      },
+      create: (context) => ({
+        onInit: () => {
+          context.safe.getTasks();
+          context.safe.addTask({
+            id: 'task-1',
+            rowIndex: 1,
+            start: '2026-01-10',
+            end: '2026-01-11',
+            label: 'Task 1',
+          });
+          context.safe.updateTask('task-1', { rowIndex: 2 });
+          context.safe.deleteTask('task-1');
+          context.safe.exportTasks();
+        },
+      }),
+    };
+
+    loadPluginsMock.mockResolvedValue([
+      {
+        definition: runtimePlugin,
+        config: {
+          source: { type: 'esm', url: 'https://example.com/runtime-safe.mjs' },
+        },
+      },
+    ]);
+
+    const { api } = makeHostApi();
+    api.safeApi.getTasks = getTasks;
+    api.safeApi.addTask = addTask;
+    api.safeApi.updateTask = updateTask;
+    api.safeApi.deleteTask = deleteTask;
+    api.safeApi.exportTasks = exportTasks;
+
+    const runtime = new PluginRuntime(api);
+    await runtime.load();
+    await runtime.init();
+
+    expect(getTasks).toHaveBeenCalledTimes(1);
+    expect(addTask).toHaveBeenCalledWith({
+      id: 'task-1',
+      rowIndex: 1,
+      start: '2026-01-10',
+      end: '2026-01-11',
+      label: 'Task 1',
+    });
+    expect(updateTask).toHaveBeenCalledWith('task-1', { rowIndex: 2 });
+    expect(deleteTask).toHaveBeenCalledWith('task-1');
+    expect(exportTasks).toHaveBeenCalledTimes(1);
   });
 
   it('notifies edit mode and task edit lifecycle hooks in load order', async () => {

@@ -12,7 +12,7 @@ import type {
 } from './core';
 import type { SampleOptions } from './data';
 
-export const GANTT_PLUGIN_API_VERSION = '1.1.0';
+export const GANTT_PLUGIN_API_VERSION = '1.2.0';
 
 export type TaskStyleOverride = {
   fill?: [number, number, number, number];
@@ -109,6 +109,30 @@ export type GanttEditCallbacks = {
   onTaskEditCancel?: (event: GanttTaskEditEvent) => void;
 };
 
+export type GanttRuntimeDateInput = number | string | Date;
+
+export type GanttRuntimeTaskInput = Omit<GanttTask, 'start' | 'end'> & {
+  start: GanttRuntimeDateInput;
+  end: GanttRuntimeDateInput;
+};
+
+export type GanttRuntimeTaskPatch = Partial<Omit<GanttRuntimeTaskInput, 'id'>>;
+
+export type GanttRuntimeImportOptions = {
+  numericDateMode?: 'day-serial' | 'timestamp-ms';
+};
+
+export type GanttExportedTask = {
+  id: string;
+  rowIndex: number;
+  label: string;
+  milestone: boolean;
+  dependencies: string[];
+  startDate: string;
+  endDate: string;
+  durationDays: number;
+};
+
 export type GanttPluginInstance = {
   onInit?: () => void | Promise<void>;
   onSceneBuild?: (scene: GanttScene) => void | GanttScene | Promise<void | GanttScene>;
@@ -138,6 +162,17 @@ export type GanttSafeApi = {
   registerModule: (module: GanttModule) => () => void;
   registerTaskEditResolver: (resolver: GanttTaskEditResolver) => () => void;
   getSceneSnapshot: () => Readonly<GanttScene>;
+  getTask: (taskId: string) => GanttTask | null;
+  getTasks: () => GanttTask[];
+  addTask: (input: GanttRuntimeTaskInput, options?: GanttRuntimeImportOptions) => GanttTask;
+  updateTask: (taskId: string, patch: GanttRuntimeTaskPatch, options?: GanttRuntimeImportOptions) => GanttTask;
+  deleteTask: (taskId: string) => GanttTask;
+  deleteTasks: (taskIds: string[]) => GanttTask[];
+  importTasks: (
+    inputs: GanttRuntimeTaskInput[],
+    options?: GanttRuntimeImportOptions,
+  ) => { added: GanttTask[]; updated: GanttTask[] };
+  exportTasks: () => GanttExportedTask[];
   getCameraSnapshot: () => Readonly<CameraState>;
   getInteractionState: () => Readonly<GanttInteractionState>;
   setInteractionMode: (mode: GanttInteractionMode) => void;
@@ -337,6 +372,17 @@ export type GanttHostController = {
   toolbar: HTMLDivElement | null;
   statusLine: HTMLDivElement | null;
   getScene: () => GanttScene;
+  getTask: (taskId: string) => GanttTask | null;
+  getTasks: () => GanttTask[];
+  addTask: (input: GanttRuntimeTaskInput, options?: GanttRuntimeImportOptions) => GanttTask;
+  updateTask: (taskId: string, patch: GanttRuntimeTaskPatch, options?: GanttRuntimeImportOptions) => GanttTask;
+  deleteTask: (taskId: string) => GanttTask;
+  deleteTasks: (taskIds: string[]) => GanttTask[];
+  importTasks: (
+    inputs: GanttRuntimeTaskInput[],
+    options?: GanttRuntimeImportOptions,
+  ) => { added: GanttTask[]; updated: GanttTask[] };
+  exportTasks: () => GanttExportedTask[];
   getCamera: () => CameraState;
   getIndex: () => TaskIndex;
   getRenderOptions: () => FrameOptions;

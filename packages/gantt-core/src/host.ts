@@ -24,12 +24,27 @@ import { createFallbackFontAtlas, loadMsdfFontAtlas, TextLayoutEngine, type Font
 import { ModuleManager } from './module-manager';
 import { PluginRuntime } from './plugin-runtime';
 import { GanttRenderer } from './render';
+import {
+  addTask as addRuntimeTask,
+  cloneTask as cloneRuntimeTask,
+  deleteTask as deleteRuntimeTask,
+  deleteTasks as deleteRuntimeTasks,
+  exportTasks as exportRuntimeTasks,
+  getTask as getRuntimeTask,
+  getTasks as getRuntimeTasks,
+  importTasks as importRuntimeTasks,
+  updateTask as updateRuntimeTask,
+} from './runtime-data';
 import type {
   GanttConfig,
+  GanttExportedTask,
   GanttHostController,
   GanttInteractionMode,
   GanttInteractionState,
   GanttModule,
+  GanttRuntimeImportOptions,
+  GanttRuntimeTaskInput,
+  GanttRuntimeTaskPatch,
   GanttTaskEditEvent,
   GanttTaskEditResolver,
   GanttTaskEditState,
@@ -444,6 +459,14 @@ class GanttHostImpl implements GanttHostController {
         registerModule: (module) => this.registerModule(module),
         registerTaskEditResolver: (resolver) => this.registerTaskEditResolver(resolver),
         getSceneSnapshot: () => this.scene,
+        getTask: (taskId) => this.getTask(taskId),
+        getTasks: () => this.getTasks(),
+        addTask: (input, options) => this.addTask(input, options),
+        updateTask: (taskId, patch, options) => this.updateTask(taskId, patch, options),
+        deleteTask: (taskId) => this.deleteTask(taskId),
+        deleteTasks: (taskIds) => this.deleteTasks(taskIds),
+        importTasks: (inputs, options) => this.importTasks(inputs, options),
+        exportTasks: () => this.exportTasks(),
         getCameraSnapshot: () => this.camera,
         getInteractionState: () => this.getInteractionState(),
         setInteractionMode: (mode) => this.setInteractionMode(mode),
@@ -599,10 +622,7 @@ class GanttHostImpl implements GanttHostController {
   }
 
   private cloneTask(task: GanttTask): GanttTask {
-    return {
-      ...task,
-      dependencies: task.dependencies?.slice(),
-    };
+    return cloneRuntimeTask(task);
   }
 
   private cloneActiveEdit(edit: GanttTaskEditState | null): GanttTaskEditState | null {
@@ -907,13 +927,94 @@ class GanttHostImpl implements GanttHostController {
     }
   }
 
-  replaceScene(scene: GanttScene): void {
+  private applyCommittedSceneMutation<T>(mutate: () => { scene: GanttScene; result: T }): T {
+    if (this.activeEdit?.status === 'committing') {
+      throw new Error('Cannot mutate tasks while a task edit commit is pending.');
+    }
+
     if (this.activeEdit?.status === 'preview') {
       this.cancelActiveEdit();
     }
 
+    const { scene, result } = mutate();
     this.replaceCommittedScene(scene);
     this.requestRender();
+    return result;
+  }
+
+  replaceScene(scene: GanttScene): void {
+    this.applyCommittedSceneMutation(() => ({
+      scene,
+      result: undefined,
+    }));
+  }
+
+  getTask(taskId: string): GanttTask | null {
+    return getRuntimeTask(this.scene, taskId);
+  }
+
+  getTasks(): GanttTask[] {
+    return getRuntimeTasks(this.scene);
+  }
+
+  addTask(input: GanttRuntimeTaskInput, options?: GanttRuntimeImportOptions): GanttTask {
+    return this.applyCommittedSceneMutation(() => {
+      const result = addRuntimeTask(this.scene, input, options);
+      return {
+        scene: result.scene,
+        result: result.task,
+      };
+    });
+  }
+
+  updateTask(taskId: string, patch: GanttRuntimeTaskPatch, options?: GanttRuntimeImportOptions): GanttTask {
+    return this.applyCommittedSceneMutation(() => {
+      const result = updateRuntimeTask(this.scene, taskId, patch, options);
+      return {
+        scene: result.scene,
+        result: result.task,
+      };
+    });
+  }
+
+  deleteTask(taskId: string): GanttTask {
+    return this.applyCommittedSceneMutation(() => {
+      const result = deleteRuntimeTask(this.scene, taskId);
+      return {
+        scene: result.scene,
+        result: result.task,
+      };
+    });
+  }
+
+  deleteTasks(taskIds: string[]): GanttTask[] {
+    return this.applyCommittedSceneMutation(() => {
+      const result = deleteRuntimeTasks(this.scene, taskIds);
+      return {
+        scene: result.scene,
+        result: result.tasks,
+      };
+    });
+  }
+
+  importTasks(
+    inputs: GanttRuntimeTaskInput[],
+    options?: GanttRuntimeImportOptions,
+  ): { added: GanttTask[]; updated: GanttTask[] } {
+    return this.applyCommittedSceneMutation(() => {
+      const result = importRuntimeTasks(this.scene, inputs, options);
+      return {
+        scene: result.scene,
+        result: {
+          added: result.added,
+          updated: result.updated,
+        },
+      };
+    });
+  }
+
+  exportTasks(): GanttExportedTask[] {
+    return exportRuntimeTasks(this.scene);
   }
 
   getSelection(): PluginSelectionState {
