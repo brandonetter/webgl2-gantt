@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["node", "vitest/globals"],
+    "baseUrl": ".",
+    "paths": {
+      "@gantt/gantt-core": ["packages/gantt-core/src/index.ts"],
+      "@gantt/gantt-plugin-sdk": ["packages/gantt-plugin-sdk/src/index.ts"]
+    }
+  },
+  "include": ["tests", "packages", "apps", "vite.config.ts"]
+}

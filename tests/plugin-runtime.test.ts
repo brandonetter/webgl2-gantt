@@ -1,0 +1,210 @@
+import { vi } from 'vitest';
+import { normalizeConfig } from '@gantt/gantt-core';
+import type { FrameScene, GanttScene, GanttPlugin } from '@gantt/gantt-core';
+
+const loadPluginsMock = vi.hoisted(() => vi.fn());
+
+vi.mock('../packages/gantt-core/src/plugin-loader', () => ({
+  loadPlugins: loadPluginsMock,
+}));
+
+import { PluginRuntime } from '../packages/gantt-core/src/plugin-runtime';
+
+function makeHostApi(configInput = {}) {
+  const logs: Array<{ level: 'info' | 'warn' | 'error'; message: string }> = [];
+  const config = normalizeConfig(configInput);
+
+  return {
+    logs,
+    api: {
+      config,
+      safeApi: {
+        registerTaskStyleResolver: () => () => undefined,
+        registerOverlay: () => () => undefined,
+        registerUiCommand: () => () => undefined,
+        registerModule: () => () => undefined,
+        getSceneSnapshot: () => ({ tasks: [], rowLabels: [], timelineStart: 0, timelineEnd: 0 }),
+        getCameraSnapshot: () => ({ scrollX: 0, scrollY: 0, zoomX: 1, zoomY: 1, viewportWidth: 100, viewportHeight: 100 }),
+        logger: {
+          info: () => undefined,
+          warn: () => undefined,
+          error: () => undefined,
+        },
+      },
+      advancedApi: {
+        requestRender: () => undefined,
+        getInternals: () => ({ index: {} as never, renderer: {}, gl: {} as WebGL2RenderingContext }),
+      },
+      logger: {
+        info: (message: string) => logs.push({ level: 'info', message }),
+        warn: (message: string) => logs.push({ level: 'warn', message }),
+        error: (message: string) => logs.push({ level: 'error', message }),
+      },
+    },
+  };
+}
+
+describe('plugin runtime', () => {
+  beforeEach(() => {
+    loadPluginsMock.mockReset();
+  });
+
+  it('blocks advanced plugins when capability is not enabled', async () => {
+    const createSpy = vi.fn(() => ({
+      onSceneBuild: (scene: GanttScene) => ({ ...scene, timelineStart: 99 }),
+    }));
+
+    const advancedPlugin: GanttPlugin = {
+      meta: {
+        id: 'advanced',
+        version: '1.0.0',
+        apiRange: '^1.0.0',
+        capabilities: ['advanced-api'],
+      },
+      create: createSpy,
+    };
+
+    loadPluginsMock.mockResolvedValue([
+      {
+        definition: advancedPlugin,
+        config: {
+          source: { type: 'esm', url: 'https://example.com/advanced.mjs' },
+          allowAdvanced: false,
+        },
+      },
+    ]);
+
+    const { api, logs } = makeHostApi({
+      features: {
+        allowAdvancedPlugins: false,
+      },
+    });
+
+    const runtime = new PluginRuntime(api);
+    await runtime.load();
+    const scene = await runtime.applySceneHooks({ tasks: [], rowLabels: [], timelineStart: 1, timelineEnd: 2 });
+
+    expect(createSpy).not.toHaveBeenCalled();
+    expect(scene.timelineStart).toBe(1);
+    expect(logs.some((entry) => entry.level === 'error')).toBe(true);
+  });
+
+  it('continues running other plugins when one hook fails', async () => {
+    const badPlugin: GanttPlugin = {
+      meta: {
+        id: 'bad-frame',
+        version: '1.0.0',
+        apiRange: '^1.0.0',
+      },
+      create: () => ({
+        onFrameBuild: () => {
+          throw new Error('frame explode');
+        },
+      }),
+    };
+
+    const goodPlugin: GanttPlugin = {
+      meta: {
+        id: 'good-frame',
+        version: '1.0.0',
+        apiRange: '^1.0.0',
+      },
+      create: () => ({
+        onFrameBuild: (frame) => ({ ...frame, __marker: 'ok' } as FrameScene),
+      }),
+    };
+
+    loadPluginsMock.mockResolvedValue([
+      {
+        definition: badPlugin,
+        config: {
+          source: { type: 'esm', url: 'https://example.com/bad.mjs' },
+        },
+      },
+      {
+        definition: goodPlugin,
+        config: {
+          source: { type: 'esm', url: 'https://example.com/good.mjs' },
+        },
+      },
+    ]);
+
+    const { api, logs } = makeHostApi();
+    const runtime = new PluginRuntime(api);
+
+    await runtime.load();
+    await runtime.init();
+
+    const frame = await runtime.applyFrameHooks({ stats: {} } as FrameScene);
+
+    expect((frame as unknown as { __marker?: string }).__marker).toBe('ok');
+    expect(logs.some((entry) => entry.level === 'error' && entry.message.includes('bad-frame'))).toBe(true);
+  });
+
+  it('supports safe and advanced plugin paths with explicit opt-in', async () => {
+    const registerStyle = vi.fn(() => () => undefined);
+    const registerOverlay = vi.fn(() => () => undefined);
+    const advancedRender = vi.fn();
+    const safePlugin: GanttPlugin = {
+      meta: {
+        id: 'safe-plugin',
+        version: '1.0.0',
+        apiRange: '^1.0.0',
+      },
+      create: (context) => ({
+        onInit: () => {
+          context.safe.registerTaskStyleResolver(() => ({ fill: [1, 0, 0, 1] }));
+          context.safe.registerOverlay(() => undefined);
+        },
+      }),
+    };
+
+    const advancedPlugin: GanttPlugin = {
+      meta: {
+        id: 'advanced-plugin',
+        version: '1.0.0',
+        apiRange: '^1.0.0',
+        capabilities: ['advanced-api'],
+      },
+      create: (context) => ({
+        onInit: () => {
+          context.advanced?.requestRender();
+        },
+      }),
+    };
+
+    loadPluginsMock.mockResolvedValue([
+      {
+        definition: safePlugin,
+        config: {
+          source: { type: 'esm', url: 'https://example.com/safe.mjs' },
+        },
+      },
+      {
+        definition: advancedPlugin,
+        config: {
+          source: { type: 'umd', url: 'https://example.com/advanced.js', global: 'AdvancedPlugin' },
+          allowAdvanced: true,
+        },
+      },
+    ]);
+
+    const { api } = makeHostApi({
+      features: {
+        allowAdvancedPlugins: true,
+      },
+    });
+
+    api.safeApi.registerTaskStyleResolver = registerStyle;
+    api.safeApi.registerOverlay = registerOverlay;
+    api.advancedApi.requestRender = advancedRender;
+
+    const runtime = new PluginRuntime(api);
+    await runtime.load();
+    await runtime.init();
+
+    expect(registerStyle).toHaveBeenCalledTimes(1);
+    expect(registerOverlay).toHaveBeenCalledTimes(1);
+    expect(advancedRender).toHaveBeenCalledTimes(1);
+  });
+});
