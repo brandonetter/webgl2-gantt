@@ -260,6 +260,7 @@ function mergeDisplayConfig(display: GanttDisplayConfig | undefined): Normalized
       arrowLengthPx: display?.dependencies?.arrowLengthPx ?? defaults.dependencies.arrowLengthPx,
       arrowWidthPx: display?.dependencies?.arrowWidthPx ?? defaults.dependencies.arrowWidthPx,
       showArrowheads: display?.dependencies?.showArrowheads ?? defaults.dependencies.showArrowheads,
+      clusterPaths: display?.dependencies?.clusterPaths ?? defaults.dependencies.clusterPaths,
     },
   };
 }

@@ -8,8 +8,17 @@ export type GanttTask = {
   end: number;
   label: string;
   milestone?: boolean;
-  dependencies?: string[];
+  dependencies?: GanttDependencyRef[];
 } & Record<string, unknown>;
+
+export type GanttDependencyType = 'FS' | 'FF' | 'SF' | 'SS';
+
+export type GanttDependencyObject = {
+  taskId: string;
+  type?: GanttDependencyType;
+};
+
+export type GanttDependencyRef = string | GanttDependencyObject;
 
 export type GanttScene = {
   tasks: GanttTask[];
@@ -126,7 +135,10 @@ export type DependencyPath = {
   id: string;
   sourceTaskId: string;
   targetTaskId: string;
+  dependencyType?: GanttDependencyType;
+  dependencyIndex?: number;
   segments: DependencySegment[];
+  hitSegments?: DependencySegment[];
 };
 
 export type FrameOptions = {
@@ -200,6 +212,7 @@ export type GanttDisplayConfig = {
     arrowLengthPx?: number;
     arrowWidthPx?: number;
     showArrowheads?: boolean;
+    clusterPaths?: boolean;
   };
 };
 
@@ -253,6 +266,7 @@ export type NormalizedGanttDisplayConfig = {
     arrowLengthPx: number;
     arrowWidthPx: number;
     showArrowheads: boolean;
+    clusterPaths: boolean;
   };
 };
 
@@ -270,6 +284,28 @@ const DEFAULT_OPTIONS: FrameOptions = {
 };
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function isTypedDependencyRef(dependency: GanttDependencyRef): dependency is GanttDependencyObject {
+  return typeof dependency === 'object' && dependency !== null;
+}
+
+export function getDependencyTaskId(dependency: GanttDependencyRef): string {
+  return typeof dependency === 'string' ? dependency : dependency.taskId;
+}
+
+export function getDependencyType(dependency: GanttDependencyRef): GanttDependencyType | undefined {
+  return typeof dependency === 'string' ? undefined : dependency.type;
+}
+
+export function cloneDependencyRef(dependency: GanttDependencyRef): GanttDependencyRef {
+  return typeof dependency === 'string' ? dependency : { ...dependency };
+}
+
+export function cloneDependencyRefs(
+  dependencies: readonly GanttDependencyRef[] | undefined,
+): GanttDependencyRef[] | undefined {
+  return dependencies?.map((dependency) => cloneDependencyRef(dependency));
+}
 
 type TimeAxisStep = {
   unit: 'day' | 'month' | 'year';
@@ -336,6 +372,7 @@ export const DEFAULT_DISPLAY_OPTIONS: NormalizedGanttDisplayConfig = {
     arrowLengthPx: 8,
     arrowWidthPx: 4,
     showArrowheads: true,
+    clusterPaths: true,
   },
 };
 
@@ -2020,17 +2057,8 @@ function buildDependencySegments(
     baseScreen[0] - perpX * arrowWidth,
     baseScreen[1] - perpY * arrowWidth,
   ];
-  const baseWorld = screenToWorld(camera, baseScreen[0], baseScreen[1]);
   const leftWorld = screenToWorld(camera, leftScreen[0], leftScreen[1]);
   const rightWorld = screenToWorld(camera, rightScreen[0], rightScreen[1]);
-
-  if (display.showArrowheads) {
-    const lastSegment = segments[segments.length - 1];
-    if (lastSegment) {
-      lastSegment.x2 = baseWorld[0];
-      lastSegment.y2 = baseWorld[1];
-    }
-  }
 
   return {
     segments,
@@ -2042,6 +2070,351 @@ function buildDependencySegments(
         }
       : null,
   };
+}
+
+type TypedDependencyRoute = {
+  points: Point[];
+  sourceAnchor: Point;
+  targetAnchor: Point;
+  sourceRect: { x: number; y: number; w: number; h: number };
+  targetRect: { x: number; y: number; w: number; h: number };
+  targetSide: AttachmentSide;
+  targetLaneX: number;
+  verticalStartY: number;
+  clusterable: boolean;
+};
+
+type ResolvedDependencyEntry = {
+  id: string;
+  rawDependency: GanttDependencyRef;
+  dependencyIndex: number;
+  sourceTask: GanttTask;
+  targetTask: GanttTask;
+  sourceTaskId: string;
+  targetTaskId: string;
+  type?: GanttDependencyType;
+  taskSelected: boolean;
+  taskHovered: boolean;
+  predecessorSelected: boolean;
+  predecessorHovered: boolean;
+  lineSelected: boolean;
+  lineHovered: boolean;
+  emphasis: number;
+  thickness: number;
+  color: GanttColor;
+};
+
+type BuiltDependencyPath = {
+  path: DependencyPath;
+  renderSegments: DependencySegment[];
+  arrowhead: DependencyArrowhead | null;
+  entry: ResolvedDependencyEntry;
+};
+
+type ClusterRenderBatch = {
+  paths: BuiltDependencyPath[];
+  sharedSegments: DependencySegment[];
+  sharedArrowhead: DependencyArrowhead | null;
+  color: GanttColor;
+  thickness: number;
+  emphasis: number;
+};
+
+function routePenaltyAcrossRects(
+  points: Point[],
+  rects: Array<{ x: number; y: number; w: number; h: number }>,
+): number {
+  let penalty = 0;
+
+  for (let i = 1; i < points.length; i += 1) {
+    const start = points[i - 1];
+    const end = points[i];
+    for (const rect of rects) {
+      if (segmentIntersectsRectInterior(start.x, start.y, end.x, end.y, rect)) {
+        penalty += 1;
+      }
+    }
+  }
+
+  return penalty;
+}
+
+function buildDependencyArrowhead(
+  segments: DependencySegment[],
+  targetAnchor: Point,
+  camera: CameraState,
+  display: NormalizedGanttDisplayConfig['dependencies'],
+): DependencyArrowhead | null {
+  if (!display.showArrowheads || segments.length === 0) {
+    return null;
+  }
+
+  const targetScreen = worldToScreen(camera, targetAnchor.x, targetAnchor.y);
+  const previousScreen = worldToScreen(
+    camera,
+    segments[segments.length - 1].x1,
+    segments[segments.length - 1].y1,
+  );
+  const dirX = targetScreen[0] - previousScreen[0];
+  const dirY = targetScreen[1] - previousScreen[1];
+  const dirLength = Math.hypot(dirX, dirY) || 1;
+  const unitX = dirX / dirLength;
+  const unitY = dirY / dirLength;
+  const perpX = -unitY;
+  const perpY = unitX;
+  const baseScreen: [number, number] = [
+    targetScreen[0] - unitX * display.arrowLengthPx,
+    targetScreen[1] - unitY * display.arrowLengthPx,
+  ];
+  const leftScreen: [number, number] = [
+    baseScreen[0] + perpX * display.arrowWidthPx,
+    baseScreen[1] + perpY * display.arrowWidthPx,
+  ];
+  const rightScreen: [number, number] = [
+    baseScreen[0] - perpX * display.arrowWidthPx,
+    baseScreen[1] - perpY * display.arrowWidthPx,
+  ];
+  const leftWorld = screenToWorld(camera, leftScreen[0], leftScreen[1]);
+  const rightWorld = screenToWorld(camera, rightScreen[0], rightScreen[1]);
+
+  return {
+    tip: targetAnchor,
+    left: { x: leftWorld[0], y: leftWorld[1] },
+    right: { x: rightWorld[0], y: rightWorld[1] },
+  };
+}
+
+function dependencyTypeSourceSide(type: GanttDependencyType): AttachmentSide {
+  return type === 'FS' || type === 'FF' ? 'right' : 'left';
+}
+
+function dependencyTypeTargetSide(type: GanttDependencyType): AttachmentSide {
+  return type === 'FS' || type === 'SS' ? 'left' : 'right';
+}
+
+function buildTypedDependencyRoute(
+  sourceTask: GanttTask,
+  targetTask: GanttTask,
+  type: GanttDependencyType,
+  camera: CameraState,
+  config: FrameOptions,
+  display: NormalizedGanttDisplayConfig['dependencies'],
+): TypedDependencyRoute | null {
+  const sourceRect = getDependencyTaskRect(sourceTask, config, camera);
+  const targetRect = getDependencyTaskRect(targetTask, config, camera);
+  const sourceSide = dependencyTypeSourceSide(type);
+  const targetSide = dependencyTypeTargetSide(type);
+  const sourceAnchor = buildAnchor(sourceRect, sourceSide);
+  const targetAnchor = buildAnchor(targetRect, targetSide);
+  const sourceSameRowAsTarget = sourceTask.rowIndex === targetTask.rowIndex;
+  const routePadding = clamp(
+    Math.min(
+      0.5,
+      Math.min(sourceRect.w, targetRect.w) * 0.2,
+      6 / Math.max(camera.zoomX, 0.001),
+    ),
+    1 / 24,
+    0.5,
+  );
+  const sourceLaneOffset = routePadding;
+  const targetLaneOffset = clamp(
+    Math.max(
+      routePadding,
+      (display.arrowLengthPx + display.cornerRadiusPx * 0.5) / Math.max(camera.zoomX, 0.001),
+    ),
+    1 / 24,
+    0.75,
+  );
+  const sourceLaneX = sourceSide === 'left'
+    ? sourceRect.x - sourceLaneOffset
+    : sourceRect.x + sourceRect.w + sourceLaneOffset;
+  const targetLaneX = targetSide === 'left'
+    ? targetRect.x - targetLaneOffset
+    : targetRect.x + targetRect.w + targetLaneOffset;
+  const sameRowDirectPoints = [sourceAnchor, targetAnchor];
+  const directIsVisiblyOutsideBars =
+    (sourceSide === 'right' &&
+      targetSide === 'left' &&
+      sourceRect.x + sourceRect.w <= targetRect.x) ||
+    (sourceSide === 'left' &&
+      targetSide === 'right' &&
+      targetRect.x + targetRect.w <= sourceRect.x);
+  const directCrossesInterior =
+    !directIsVisiblyOutsideBars ||
+    routePenaltyAcrossRects(sameRowDirectPoints, [sourceRect, targetRect]) > 0;
+
+  if (sourceSameRowAsTarget && !directCrossesInterior) {
+    return {
+      points: sameRowDirectPoints,
+      sourceAnchor,
+      targetAnchor,
+      sourceRect,
+      targetRect,
+      targetSide,
+      targetLaneX,
+      verticalStartY: targetAnchor.y,
+      clusterable: false,
+    };
+  }
+
+  if (sourceSide === targetSide) {
+    const sharedLaneX = sourceSide === 'left'
+      ? Math.min(sourceLaneX, targetLaneX)
+      : Math.max(sourceLaneX, targetLaneX);
+
+    return {
+      points: simplifyRoutePoints([
+        sourceAnchor,
+        { x: sharedLaneX, y: sourceAnchor.y },
+        { x: sharedLaneX, y: targetAnchor.y },
+        targetAnchor,
+      ]),
+      sourceAnchor,
+      targetAnchor,
+      sourceRect,
+      targetRect,
+      targetSide,
+      targetLaneX: sharedLaneX,
+      verticalStartY: sourceAnchor.y,
+      clusterable: false,
+    };
+  }
+
+  const forwardGap = sourceSide === 'right'
+    ? targetAnchor.x - sourceAnchor.x
+    : sourceAnchor.x - targetAnchor.x;
+
+  if (!sourceSameRowAsTarget && forwardGap > 0.001) {
+    const adaptiveSourceLaneOffset = Math.min(sourceLaneOffset, forwardGap * 0.35);
+    const adaptiveTargetLaneOffset = Math.min(targetLaneOffset, forwardGap * 0.35);
+    const adaptiveSourceLaneX = sourceSide === 'left'
+      ? sourceAnchor.x - adaptiveSourceLaneOffset
+      : sourceAnchor.x + adaptiveSourceLaneOffset;
+    const adaptiveTargetLaneX = targetSide === 'left'
+      ? targetAnchor.x - adaptiveTargetLaneOffset
+      : targetAnchor.x + adaptiveTargetLaneOffset;
+    const laneGap = Math.abs(adaptiveTargetLaneX - adaptiveSourceLaneX);
+    if (laneGap <= routePadding * 4) {
+      const sharedLaneX = (adaptiveSourceLaneX + adaptiveTargetLaneX) * 0.5;
+      return {
+        points: simplifyRoutePoints([
+          sourceAnchor,
+          { x: sharedLaneX, y: sourceAnchor.y },
+          { x: sharedLaneX, y: targetAnchor.y },
+          targetAnchor,
+        ]),
+        sourceAnchor,
+        targetAnchor,
+        sourceRect,
+        targetRect,
+        targetSide,
+        targetLaneX: sharedLaneX,
+        verticalStartY: sourceAnchor.y,
+        clusterable: false,
+      };
+    }
+
+    return {
+      points: simplifyRoutePoints([
+        sourceAnchor,
+        { x: adaptiveSourceLaneX, y: sourceAnchor.y },
+        { x: adaptiveTargetLaneX, y: sourceAnchor.y },
+        { x: adaptiveTargetLaneX, y: targetAnchor.y },
+        targetAnchor,
+      ]),
+      sourceAnchor,
+      targetAnchor,
+      sourceRect,
+      targetRect,
+      targetSide,
+      targetLaneX: adaptiveTargetLaneX,
+      verticalStartY: sourceAnchor.y,
+      clusterable: true,
+    };
+  }
+
+  const corridorY = sourceAnchor.y < targetAnchor.y
+    ? (sourceRect.y + sourceRect.h + targetRect.y) * 0.5
+    : (targetRect.y + targetRect.h + sourceRect.y) * 0.5;
+
+  return {
+    points: simplifyRoutePoints([
+      sourceAnchor,
+      { x: sourceLaneX, y: sourceAnchor.y },
+      { x: sourceLaneX, y: corridorY },
+      { x: targetLaneX, y: corridorY },
+      { x: targetLaneX, y: targetAnchor.y },
+      targetAnchor,
+    ]),
+    sourceAnchor,
+    targetAnchor,
+    sourceRect,
+    targetRect,
+    targetSide,
+    targetLaneX,
+    verticalStartY: corridorY,
+    clusterable: true,
+  };
+}
+
+function buildPathFromPoints(
+  points: Point[],
+  camera: CameraState,
+  display: NormalizedGanttDisplayConfig['dependencies'],
+): { segments: DependencySegment[]; arrowhead: DependencyArrowhead | null } {
+  const cornerRadius = Math.max(0, display.cornerRadiusPx / camera.zoomX);
+  const segments = buildRoundedSegments(points, cornerRadius);
+  if (segments.length === 0) {
+    return { segments: [], arrowhead: null };
+  }
+
+  return {
+    segments,
+    arrowhead: buildDependencyArrowhead(segments, points[points.length - 1], camera, display),
+  };
+}
+
+function findVerticalTrimSegment(points: Point[], targetLaneX: number, splitY: number): number {
+  for (let index = points.length - 2; index >= 0; index -= 1) {
+    const start = points[index];
+    const end = points[index + 1];
+    if (Math.abs(start.x - targetLaneX) >= 0.001 || Math.abs(end.x - targetLaneX) >= 0.001) {
+      continue;
+    }
+    const minY = Math.min(start.y, end.y) - 0.001;
+    const maxY = Math.max(start.y, end.y) + 0.001;
+    if (splitY >= minY && splitY <= maxY) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function slicePointsToTargetLane(points: Point[], targetLaneX: number, splitY: number): Point[] {
+  const trimIndex = findVerticalTrimSegment(points, targetLaneX, splitY);
+  if (trimIndex < 0) {
+    return points.slice();
+  }
+
+  const sliced = points.slice(0, trimIndex + 1);
+  const splitPoint = { x: targetLaneX, y: splitY };
+  const last = sliced[sliced.length - 1];
+  if (!last || Math.abs(last.x - splitPoint.x) >= 0.001 || Math.abs(last.y - splitPoint.y) >= 0.001) {
+    sliced.push(splitPoint);
+  }
+
+  return simplifyRoutePoints(sliced);
+}
+
+function dependencyIdBase(sourceTaskId: string, targetTaskId: string, type: GanttDependencyType | undefined): string {
+  return type ? `${sourceTaskId}->${targetTaskId}:${type}` : `${sourceTaskId}->${targetTaskId}`;
+}
+
+function resolveUniqueDependencyId(baseId: string, counts: Map<string, number>): string {
+  const count = counts.get(baseId) ?? 0;
+  counts.set(baseId, count + 1);
+  return count === 0 ? baseId : `${baseId}#${count + 1}`;
 }
 
 function distanceToSegmentSquared(
@@ -2081,7 +2454,7 @@ export function pickDependencyAtPoint(
   let bestDistance = tolerancePx * tolerancePx;
 
   for (const path of frame.dependencyPaths) {
-    for (const segment of path.segments) {
+    for (const segment of path.hitSegments ?? path.segments) {
       const x1 = (segment.x1 - camera.scrollX) * camera.zoomX;
       const y1 = (segment.y1 - camera.scrollY) * camera.zoomY;
       const x2 = (segment.x2 - camera.scrollX) * camera.zoomX;
@@ -2176,6 +2549,69 @@ export function buildFrame(
   let gridLineCount = 0;
   let visibleTasks = 0;
   let visibleDependencies = 0;
+  const dependencyIdCounts = new Map<string, number>();
+  const dependencyEntries: ResolvedDependencyEntry[] = [];
+
+  for (const task of scene.tasks) {
+    const taskSelected = selectedTaskIds.has(task.id);
+    const taskHovered = task.id === renderState.hoveredTaskId;
+
+    for (const [dependencyIndex, dependency] of (task.dependencies ?? []).entries()) {
+      const sourceTaskId = getDependencyTaskId(dependency);
+      const predecessor = index.byId.get(sourceTaskId);
+      if (!predecessor) {
+        continue;
+      }
+
+      const type = getDependencyType(dependency);
+      const predecessorSelected = selectedTaskIds.has(predecessor.id);
+      const predecessorHovered = predecessor.id === renderState.hoveredTaskId;
+      const dependencyId = resolveUniqueDependencyId(
+        dependencyIdBase(sourceTaskId, task.id, type),
+        dependencyIdCounts,
+      );
+      const lineSelected = dependencyId === renderState.selectedDependencyId;
+      const lineHovered = dependencyId === renderState.hoveredDependencyId;
+      const emphasis = lineSelected
+        ? 0.95
+        : lineHovered
+          ? 0.78
+          : taskSelected || predecessorSelected
+            ? 0.8
+            : taskHovered || predecessorHovered
+              ? 0.6
+              : 0.35;
+      const thickness = lineSelected
+        ? display.dependencies.selectedThickness
+        : lineHovered
+          ? display.dependencies.hoveredThickness
+          : display.dependencies.thickness;
+      const color =
+        (lineSelected && display.dependencies.selectedColor) ||
+        (lineHovered && display.dependencies.hoveredColor) ||
+        display.dependencies.color;
+
+      dependencyEntries.push({
+        id: dependencyId,
+        rawDependency: dependency,
+        dependencyIndex,
+        sourceTask: predecessor,
+        targetTask: task,
+        sourceTaskId,
+        targetTaskId: task.id,
+        type,
+        taskSelected,
+        taskHovered,
+        predecessorSelected,
+        predecessorHovered,
+        lineSelected,
+        lineHovered,
+        emphasis,
+        thickness,
+        color,
+      });
+    }
+  }
 
   for (
     let time = alignTimeStep(gridLeft, gridStep);
@@ -2572,49 +3008,267 @@ export function buildFrame(
     );
   }
 
-  for (const task of scene.tasks) {
-    const taskSelected = selectedTaskIds.has(task.id);
-    const taskHovered = task.id === renderState.hoveredTaskId;
+  const builtDependencyPaths: BuiltDependencyPath[] = [];
+  const clusterBatches: ClusterRenderBatch[] = [];
+  const clusterCandidateGroups = new Map<string, Array<{ entry: ResolvedDependencyEntry; route: TypedDependencyRoute }>>();
 
-    for (const depId of task.dependencies ?? []) {
-      const predecessor = index.byId.get(depId);
-      if (!predecessor) {
-        continue;
-      }
-
-      const predecessorSelected = selectedTaskIds.has(predecessor.id);
-      const predecessorHovered = predecessor.id === renderState.hoveredTaskId;
-      const dependencyId = `${depId}->${task.id}`;
-      const lineSelected = dependencyId === renderState.selectedDependencyId;
-      const lineHovered = dependencyId === renderState.hoveredDependencyId;
-      const emphasis = lineSelected
-        ? 0.95
-        : lineHovered
-          ? 0.78
-          : taskSelected || predecessorSelected
-            ? 0.8
-            : taskHovered || predecessorHovered
-              ? 0.6
-              : 0.35;
-      const thickness = lineSelected
-        ? display.dependencies.selectedThickness
-        : lineHovered
-          ? display.dependencies.hoveredThickness
-          : display.dependencies.thickness;
-      const dependencyColor =
-        (lineSelected && display.dependencies.selectedColor) ||
-        (lineHovered && display.dependencies.hoveredColor) ||
-        display.dependencies.color;
-      let emitted = false;
+  for (const entry of dependencyEntries) {
+    if (!entry.type) {
       const { segments, arrowhead } = buildDependencySegments(
-        predecessor,
-        task,
+        entry.sourceTask,
+        entry.targetTask,
         camera,
         config,
         display.dependencies,
       );
+      builtDependencyPaths.push({
+        path: {
+          id: entry.id,
+          sourceTaskId: entry.sourceTaskId,
+          targetTaskId: entry.targetTaskId,
+          dependencyType: entry.type,
+          dependencyIndex: entry.dependencyIndex,
+          segments,
+        },
+        renderSegments: segments,
+        arrowhead,
+        entry,
+      });
+      continue;
+    }
 
-      for (const segment of segments) {
+    const route = buildTypedDependencyRoute(
+      entry.sourceTask,
+      entry.targetTask,
+      entry.type,
+      camera,
+      config,
+      display.dependencies,
+    );
+    if (!route) {
+      continue;
+    }
+
+    const verticalDelta = route.verticalStartY - route.targetAnchor.y;
+    const approach = verticalDelta < -0.001 ? 'above' : verticalDelta > 0.001 ? 'below' : 'flat';
+    const clusterKey = `${entry.targetTaskId}:${route.targetSide}:${approach}`;
+    const members = clusterCandidateGroups.get(clusterKey);
+    if (members) {
+      members.push({ entry, route });
+    } else {
+      clusterCandidateGroups.set(clusterKey, [{ entry, route }]);
+    }
+  }
+
+  const clusteredEntryIds = new Set<string>();
+
+  for (const [, members] of clusterCandidateGroups) {
+    const clusterableMembers = display.dependencies.clusterPaths
+      ? members.filter((member) =>
+        member.route.clusterable &&
+        Math.abs(member.route.verticalStartY - member.route.targetAnchor.y) > 0.001)
+      : [];
+
+    if (clusterableMembers.length < 2) {
+      for (const member of members) {
+        const { segments, arrowhead } = buildPathFromPoints(member.route.points, camera, display.dependencies);
+        builtDependencyPaths.push({
+          path: {
+            id: member.entry.id,
+            sourceTaskId: member.entry.sourceTaskId,
+            targetTaskId: member.entry.targetTaskId,
+            dependencyType: member.entry.type,
+            dependencyIndex: member.entry.dependencyIndex,
+            segments,
+          },
+          renderSegments: segments,
+          arrowhead,
+          entry: member.entry,
+        });
+      }
+      continue;
+    }
+
+    const targetY = clusterableMembers[0].route.targetAnchor.y;
+    const approachFromAbove = clusterableMembers.every((member) => member.route.verticalStartY < targetY - 0.001);
+    const approachFromBelow = clusterableMembers.every((member) => member.route.verticalStartY > targetY + 0.001);
+    if (!approachFromAbove && !approachFromBelow) {
+      for (const member of members) {
+        const { segments, arrowhead } = buildPathFromPoints(member.route.points, camera, display.dependencies);
+        builtDependencyPaths.push({
+          path: {
+            id: member.entry.id,
+            sourceTaskId: member.entry.sourceTaskId,
+            targetTaskId: member.entry.targetTaskId,
+            dependencyType: member.entry.type,
+            dependencyIndex: member.entry.dependencyIndex,
+            segments,
+          },
+          renderSegments: segments,
+          arrowhead,
+          entry: member.entry,
+        });
+      }
+      continue;
+    }
+
+    const splitY = approachFromAbove
+      ? Math.max(...clusterableMembers.map((member) => member.route.verticalStartY))
+      : Math.min(...clusterableMembers.map((member) => member.route.verticalStartY));
+    const sharedPoints = simplifyRoutePoints([
+      { x: clusterableMembers[0].route.targetLaneX, y: splitY },
+      { x: clusterableMembers[0].route.targetLaneX, y: targetY },
+      clusterableMembers[0].route.targetAnchor,
+    ]);
+    const sharedPath = buildPathFromPoints(sharedPoints, camera, display.dependencies);
+
+    if (sharedPath.segments.length === 0) {
+      for (const member of members) {
+        const { segments, arrowhead } = buildPathFromPoints(member.route.points, camera, display.dependencies);
+        builtDependencyPaths.push({
+          path: {
+            id: member.entry.id,
+            sourceTaskId: member.entry.sourceTaskId,
+            targetTaskId: member.entry.targetTaskId,
+            dependencyType: member.entry.type,
+            dependencyIndex: member.entry.dependencyIndex,
+            segments,
+          },
+          renderSegments: segments,
+          arrowhead,
+          entry: member.entry,
+        });
+      }
+      continue;
+    }
+
+    let clusterEmphasis = 0;
+    let clusterThickness = display.dependencies.thickness;
+    let clusterColor = display.dependencies.color;
+    const selectedMember = clusterableMembers.find((member) => member.entry.lineSelected);
+    const hoveredMember = clusterableMembers.find((member) => member.entry.lineHovered);
+    if (selectedMember) {
+      clusterColor = selectedMember.entry.color;
+    } else if (hoveredMember) {
+      clusterColor = hoveredMember.entry.color;
+    }
+    for (const member of clusterableMembers) {
+      clusterEmphasis = Math.max(clusterEmphasis, member.entry.emphasis);
+      clusterThickness = Math.max(clusterThickness, member.entry.thickness);
+    }
+
+    const clusteredPaths: BuiltDependencyPath[] = [];
+    for (const member of clusterableMembers) {
+      const uniquePoints = slicePointsToTargetLane(
+        member.route.points,
+        member.route.targetLaneX,
+        splitY,
+      );
+      const uniquePath = buildPathFromPoints(uniquePoints, camera, {
+        ...display.dependencies,
+        showArrowheads: false,
+      });
+      const fullPath = buildPathFromPoints([
+        ...uniquePoints,
+        ...sharedPoints.slice(1),
+      ], camera, {
+        ...display.dependencies,
+        showArrowheads: false,
+      });
+      clusteredPaths.push({
+          path: {
+            id: member.entry.id,
+            sourceTaskId: member.entry.sourceTaskId,
+            targetTaskId: member.entry.targetTaskId,
+            dependencyType: member.entry.type,
+            dependencyIndex: member.entry.dependencyIndex,
+            segments: fullPath.segments,
+            hitSegments: uniquePath.segments,
+          },
+        renderSegments: uniquePath.segments,
+        arrowhead: null,
+        entry: member.entry,
+      });
+      clusteredEntryIds.add(member.entry.id);
+    }
+
+    clusterBatches.push({
+      paths: clusteredPaths,
+      sharedSegments: sharedPath.segments,
+      sharedArrowhead: sharedPath.arrowhead,
+      color: clusterColor,
+      thickness: clusterThickness,
+      emphasis: clusterEmphasis,
+    });
+
+    for (const member of members) {
+      if (clusteredEntryIds.has(member.entry.id)) {
+        continue;
+      }
+      const { segments, arrowhead } = buildPathFromPoints(member.route.points, camera, display.dependencies);
+      builtDependencyPaths.push({
+        path: {
+          id: member.entry.id,
+          sourceTaskId: member.entry.sourceTaskId,
+          targetTaskId: member.entry.targetTaskId,
+          dependencyType: member.entry.type,
+          dependencyIndex: member.entry.dependencyIndex,
+          segments,
+        },
+        renderSegments: segments,
+        arrowhead,
+        entry: member.entry,
+      });
+    }
+  }
+
+  for (const builtPath of builtDependencyPaths) {
+    let emitted = false;
+    for (const segment of builtPath.renderSegments) {
+      emitted =
+        appendVisibleLine(
+          dependencyLines,
+          camera,
+          segment.x1,
+          segment.y1,
+          segment.x2,
+          segment.y2,
+          builtPath.entry.color[0],
+          builtPath.entry.color[1],
+          builtPath.entry.color[2],
+          builtPath.entry.color[3] * builtPath.entry.emphasis,
+          builtPath.entry.thickness,
+        ) || emitted;
+    }
+
+    if (!emitted) {
+      continue;
+    }
+
+    if (builtPath.arrowhead) {
+      dependencyTriangles.appendTriangle(
+        builtPath.arrowhead.left.x,
+        builtPath.arrowhead.left.y,
+        builtPath.arrowhead.tip.x,
+        builtPath.arrowhead.tip.y,
+        builtPath.arrowhead.right.x,
+        builtPath.arrowhead.right.y,
+        builtPath.entry.color[0],
+        builtPath.entry.color[1],
+        builtPath.entry.color[2],
+        builtPath.entry.color[3] * builtPath.entry.emphasis,
+      );
+    }
+
+    dependencyPaths.push(builtPath.path);
+    visibleDependencies += 1;
+  }
+
+  for (const cluster of clusterBatches) {
+    let clusterVisible = false;
+    for (const path of cluster.paths) {
+      let emitted = false;
+      for (const segment of path.renderSegments) {
         emitted =
           appendVisibleLine(
             dependencyLines,
@@ -2623,37 +3277,52 @@ export function buildFrame(
             segment.y1,
             segment.x2,
             segment.y2,
-            dependencyColor[0],
-            dependencyColor[1],
-            dependencyColor[2],
-            dependencyColor[3] * emphasis,
-            thickness,
+            path.entry.color[0],
+            path.entry.color[1],
+            path.entry.color[2],
+            path.entry.color[3] * path.entry.emphasis,
+            path.entry.thickness,
           ) || emitted;
       }
 
       if (emitted) {
-        if (arrowhead) {
-          dependencyTriangles.appendTriangle(
-            arrowhead.left.x,
-            arrowhead.left.y,
-            arrowhead.tip.x,
-            arrowhead.tip.y,
-            arrowhead.right.x,
-            arrowhead.right.y,
-            dependencyColor[0],
-            dependencyColor[1],
-            dependencyColor[2],
-            dependencyColor[3] * emphasis,
-          );
-        }
-        dependencyPaths.push({
-          id: dependencyId,
-          sourceTaskId: depId,
-          targetTaskId: task.id,
-          segments,
-        });
+        clusterVisible = true;
+        dependencyPaths.push(path.path);
         visibleDependencies += 1;
       }
+    }
+
+    let sharedVisible = false;
+    for (const segment of cluster.sharedSegments) {
+      sharedVisible =
+        appendVisibleLine(
+          dependencyLines,
+          camera,
+          segment.x1,
+          segment.y1,
+          segment.x2,
+          segment.y2,
+          cluster.color[0],
+          cluster.color[1],
+          cluster.color[2],
+          cluster.color[3] * cluster.emphasis,
+          cluster.thickness,
+        ) || sharedVisible;
+    }
+
+    if ((clusterVisible || sharedVisible) && cluster.sharedArrowhead) {
+      dependencyTriangles.appendTriangle(
+        cluster.sharedArrowhead.left.x,
+        cluster.sharedArrowhead.left.y,
+        cluster.sharedArrowhead.tip.x,
+        cluster.sharedArrowhead.tip.y,
+        cluster.sharedArrowhead.right.x,
+        cluster.sharedArrowhead.right.y,
+        cluster.color[0],
+        cluster.color[1],
+        cluster.color[2],
+        cluster.color[3] * cluster.emphasis,
+      );
     }
   }
 

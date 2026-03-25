@@ -435,6 +435,43 @@ describe('runtime task host controller', () => {
     await host.dispose();
   });
 
+  it('can select a dependency path directly by id', async () => {
+    const host = await createHost();
+    const controller = host.getController();
+    const controllerState = controller as unknown as {
+      frame: {
+        dependencyPaths: Array<{
+          id: string;
+          sourceTaskId: string;
+          targetTaskId: string;
+          dependencyType?: 'FS';
+          dependencyIndex?: number;
+          segments: [];
+        }>;
+      };
+    };
+
+    controllerState.frame = {
+      dependencyPaths: [{
+        id: 'a->b:FS',
+        sourceTaskId: 'a',
+        targetTaskId: 'b',
+        dependencyType: 'FS',
+        dependencyIndex: 0,
+        segments: [],
+      }],
+    };
+
+    controller.setSelectionByDependencyId('a->b:FS');
+
+    expect(controller.getSelection().selectedTask).toBeNull();
+    expect(controller.getSelection().selectedDependency?.id).toBe('a->b:FS');
+    expect(controller.getSelection().selectedDependency?.dependencyType).toBe('FS');
+    expect(controller.getSelection().selectedDependency?.dependencyIndex).toBe(0);
+
+    await host.dispose();
+  });
+
   it('tracks multi-task selection with a primary task and preserves remaining selections after delete', async () => {
     const host = await createHost();
     const controller = host.getController();

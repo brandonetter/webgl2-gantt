@@ -710,6 +710,560 @@ describe('frame assembly', () => {
     expect(frame.dependencyPaths[0]?.segments.at(-1)?.x2).toBeLessThan(30);
   });
 
+  it('treats object dependencies without a type exactly like legacy dependencies', () => {
+    const atlas = makeTestAtlas();
+    const layout = new TextLayoutEngine(atlas);
+    const legacyScene = {
+      rowLabels: ['Row 1', 'Row 2'],
+      timelineStart: 0,
+      timelineEnd: 80,
+      tasks: [
+        { id: 'a', rowIndex: 0, start: 0, end: 40, label: 'Source' },
+        { id: 'b', rowIndex: 1, start: 10, end: 30, label: 'Target', dependencies: ['a'] },
+      ],
+    };
+    const objectScene = {
+      ...legacyScene,
+      tasks: [
+        { id: 'a', rowIndex: 0, start: 0, end: 40, label: 'Source' },
+        { id: 'b', rowIndex: 1, start: 10, end: 30, label: 'Target', dependencies: [{ taskId: 'a' }] },
+      ],
+    };
+
+    const renderState = {
+      selectedTaskId: null,
+      hoveredTaskId: null,
+      selectedDependencyId: null,
+      hoveredDependencyId: null,
+    };
+    const camera = { ...createCamera(800, 240), zoomX: 2, zoomY: 1, scrollX: 0, scrollY: 0 };
+    const options = {
+      rowPitch: 30,
+      barHeight: 16,
+      milestoneSize: 12,
+      rowPadding: 7,
+      labelPadding: 8,
+      gridPadding: 0,
+      overscanRows: 1,
+      overscanPx: 80,
+      renderSelectedDependencies: true,
+    };
+
+    const legacyFrame = buildFrame(legacyScene, buildTaskIndex(legacyScene.tasks), camera, atlas, layout, renderState, options);
+    const objectFrame = buildFrame(objectScene, buildTaskIndex(objectScene.tasks), camera, atlas, layout, renderState, options);
+
+    expect(objectFrame.dependencyPaths[0]?.segments).toEqual(legacyFrame.dependencyPaths[0]?.segments);
+    expect(objectFrame.dependencyTriangles.count).toBe(legacyFrame.dependencyTriangles.count);
+  });
+
+  it.each([
+    ['FS', 20, 30],
+    ['FF', 20, 40],
+    ['SF', 10, 40],
+    ['SS', 10, 30],
+  ] as const)('anchors typed %s dependencies to the expected task edges', (type, expectedStartX, expectedEndX) => {
+    const atlas = makeTestAtlas();
+    const layout = new TextLayoutEngine(atlas);
+    const scene = {
+      rowLabels: ['Row 1', 'Row 2'],
+      timelineStart: 0,
+      timelineEnd: 80,
+      tasks: [
+        { id: 'a', rowIndex: 0, start: 10, end: 20, label: 'Source' },
+        { id: 'b', rowIndex: 1, start: 30, end: 40, label: 'Target', dependencies: [{ taskId: 'a', type }] },
+      ],
+    };
+
+    const frame = buildFrame(
+      scene,
+      buildTaskIndex(scene.tasks),
+      { ...createCamera(800, 240), zoomX: 2, zoomY: 1, scrollX: 0, scrollY: 0 },
+      atlas,
+      layout,
+      {
+        selectedTaskId: null,
+        hoveredTaskId: null,
+        selectedDependencyId: null,
+        hoveredDependencyId: null,
+      },
+      {
+        rowPitch: 30,
+        barHeight: 16,
+        milestoneSize: 12,
+        rowPadding: 7,
+        labelPadding: 8,
+        gridPadding: 0,
+        overscanRows: 1,
+        overscanPx: 80,
+        renderSelectedDependencies: true,
+      },
+      {},
+      {
+        ...DEFAULT_DISPLAY_OPTIONS,
+        dependencies: {
+          ...DEFAULT_DISPLAY_OPTIONS.dependencies,
+          showArrowheads: false,
+        },
+      },
+    );
+
+    expect(frame.dependencyPaths[0]?.segments[0]?.x1).toBeCloseTo(expectedStartX);
+    expect(frame.dependencyPaths[0]?.segments.at(-1)?.x2).toBeCloseTo(expectedEndX);
+  });
+
+  it('exposes typed dependency metadata on rendered dependency paths', () => {
+    const atlas = makeTestAtlas();
+    const layout = new TextLayoutEngine(atlas);
+    const scene = {
+      rowLabels: ['Row 1', 'Row 2', 'Row 3'],
+      timelineStart: 0,
+      timelineEnd: 80,
+      tasks: [
+        { id: 'a', rowIndex: 0, start: 10, end: 20, label: 'A' },
+        { id: 'b', rowIndex: 1, start: 12, end: 24, label: 'B' },
+        {
+          id: 'target',
+          rowIndex: 2,
+          start: 30,
+          end: 40,
+          label: 'Target',
+          dependencies: [{ taskId: 'a', type: 'FS' }, { taskId: 'b', type: 'SS' }],
+        },
+      ],
+    };
+
+    const frame = buildFrame(
+      scene,
+      buildTaskIndex(scene.tasks),
+      { ...createCamera(800, 240), zoomX: 2, zoomY: 1, scrollX: 0, scrollY: 0 },
+      atlas,
+      layout,
+      {
+        selectedTaskId: null,
+        hoveredTaskId: null,
+        selectedDependencyId: null,
+        hoveredDependencyId: null,
+      },
+      {
+        rowPitch: 30,
+        barHeight: 16,
+        milestoneSize: 12,
+        rowPadding: 7,
+        labelPadding: 8,
+        gridPadding: 0,
+        overscanRows: 1,
+        overscanPx: 80,
+        renderSelectedDependencies: true,
+      },
+    );
+
+    expect(frame.dependencyPaths.map((path) => [path.id, path.dependencyType, path.dependencyIndex])).toEqual([
+      ['a->target:FS', 'FS', 0],
+      ['b->target:SS', 'SS', 1],
+    ]);
+  });
+
+  it.each([
+    ['FS', 'right', 'left'],
+    ['FF', 'right', 'right'],
+    ['SF', 'left', 'right'],
+    ['SS', 'left', 'left'],
+  ] as const)('makes typed %s links visibly leave and enter from the chosen edges', (type, expectedSourceSide, expectedTargetSide) => {
+    const atlas = makeTestAtlas();
+    const layout = new TextLayoutEngine(atlas);
+    const scene = {
+      rowLabels: ['Row 1', 'Row 2'],
+      timelineStart: 0,
+      timelineEnd: 80,
+      tasks: [
+        { id: 'a', rowIndex: 0, start: 10, end: 20, label: 'Source' },
+        { id: 'b', rowIndex: 1, start: 30, end: 40, label: 'Target', dependencies: [{ taskId: 'a', type }] },
+      ],
+    };
+
+    const frame = buildFrame(
+      scene,
+      buildTaskIndex(scene.tasks),
+      { ...createCamera(800, 240), zoomX: 2, zoomY: 1, scrollX: 0, scrollY: 0 },
+      atlas,
+      layout,
+      {
+        selectedTaskId: null,
+        hoveredTaskId: null,
+        selectedDependencyId: null,
+        hoveredDependencyId: null,
+      },
+      {
+        rowPitch: 30,
+        barHeight: 16,
+        milestoneSize: 12,
+        rowPadding: 7,
+        labelPadding: 8,
+        gridPadding: 0,
+        overscanRows: 1,
+        overscanPx: 80,
+        renderSelectedDependencies: true,
+      },
+      {},
+      {
+        ...DEFAULT_DISPLAY_OPTIONS,
+        dependencies: {
+          ...DEFAULT_DISPLAY_OPTIONS.dependencies,
+          showArrowheads: false,
+        },
+      },
+    );
+
+    expect(frame.dependencyPaths[0]?.dependencyType).toBe(type);
+    expect(frame.dependencyPaths[0]?.dependencyIndex).toBe(0);
+
+    const firstSegment = frame.dependencyPaths[0]?.segments[0];
+    const lastSegment = frame.dependencyPaths[0]?.segments.at(-1);
+
+    expect(firstSegment).toBeDefined();
+    expect(lastSegment).toBeDefined();
+    if (expectedSourceSide === 'right') {
+      expect((firstSegment?.x2 ?? 0)).toBeGreaterThan(firstSegment?.x1 ?? 0);
+    } else {
+      expect((firstSegment?.x2 ?? 0)).toBeLessThan(firstSegment?.x1 ?? 0);
+    }
+
+    if (expectedTargetSide === 'left') {
+      expect((lastSegment?.x2 ?? 0)).toBeGreaterThan(lastSegment?.x1 ?? 0);
+    } else {
+      expect((lastSegment?.x2 ?? 0)).toBeLessThan(lastSegment?.x1 ?? 0);
+    }
+  });
+
+  it('uses a fractional close-gap trunk for typed FS links instead of a one-day box turn', () => {
+    const atlas = makeTestAtlas();
+    const layout = new TextLayoutEngine(atlas);
+    const scene = {
+      rowLabels: ['Row 1', 'Row 2'],
+      timelineStart: 0,
+      timelineEnd: 20,
+      tasks: [
+        { id: 'source', rowIndex: 0, start: 2, end: 5, label: 'Source' },
+        { id: 'target', rowIndex: 1, start: 8, end: 13, label: 'Target', dependencies: [{ taskId: 'source', type: 'FS' }] },
+      ],
+    };
+
+    const frame = buildFrame(
+      scene,
+      buildTaskIndex(scene.tasks),
+      { ...createCamera(800, 240), zoomX: 2, zoomY: 1, scrollX: 0, scrollY: 0 },
+      atlas,
+      layout,
+      {
+        selectedTaskId: null,
+        hoveredTaskId: null,
+        selectedDependencyId: null,
+        hoveredDependencyId: null,
+      },
+      {
+        rowPitch: 30,
+        barHeight: 16,
+        milestoneSize: 12,
+        rowPadding: 7,
+        labelPadding: 8,
+        gridPadding: 0,
+        overscanRows: 1,
+        overscanPx: 80,
+        renderSelectedDependencies: true,
+      },
+      {},
+      {
+        ...DEFAULT_DISPLAY_OPTIONS,
+        dependencies: {
+          ...DEFAULT_DISPLAY_OPTIONS.dependencies,
+          showArrowheads: false,
+        },
+      },
+    );
+
+    const verticalSegments = frame.dependencyPaths[0]?.segments.filter((segment) =>
+      Math.abs(segment.x1 - segment.x2) < 0.001 &&
+      Math.abs(segment.y1 - segment.y2) > 0.001,
+    ) ?? [];
+
+    expect(verticalSegments.length).toBeGreaterThan(0);
+    const trunkX = verticalSegments[0]?.x1 ?? 0;
+    expect(trunkX).toBeGreaterThan(5);
+    expect(trunkX).toBeLessThan(7);
+  });
+
+  it('does not reverse the last leg when a typed arrowhead is longer than the final approach', () => {
+    const atlas = makeTestAtlas();
+    const layout = new TextLayoutEngine(atlas);
+    const scene = {
+      rowLabels: ['Row 1', 'Row 2'],
+      timelineStart: 0,
+      timelineEnd: 20,
+      tasks: [
+        { id: 'source', rowIndex: 0, start: 2, end: 5, label: 'Source' },
+        { id: 'target', rowIndex: 1, start: 8, end: 13, label: 'Target', dependencies: [{ taskId: 'source', type: 'FS' }] },
+      ],
+    };
+
+    const frame = buildFrame(
+      scene,
+      buildTaskIndex(scene.tasks),
+      { ...createCamera(800, 240), zoomX: 2, zoomY: 1, scrollX: 0, scrollY: 0 },
+      atlas,
+      layout,
+      {
+        selectedTaskId: null,
+        hoveredTaskId: null,
+        selectedDependencyId: null,
+        hoveredDependencyId: null,
+      },
+      {
+        rowPitch: 30,
+        barHeight: 16,
+        milestoneSize: 12,
+        rowPadding: 7,
+        labelPadding: 8,
+        gridPadding: 0,
+        overscanRows: 1,
+        overscanPx: 80,
+        renderSelectedDependencies: true,
+      },
+    );
+
+    const lastSegment = frame.dependencyPaths[0]?.segments.at(-1);
+    expect(lastSegment).toBeDefined();
+    expect((lastSegment?.x2 ?? 0)).toBeGreaterThanOrEqual((lastSegment?.x1 ?? 0) - 0.001);
+  });
+
+  it('gives typed FS links a visible final horizontal approach into the target edge', () => {
+    const atlas = makeTestAtlas();
+    const layout = new TextLayoutEngine(atlas);
+    const scene = {
+      rowLabels: ['Row 1', 'Row 2'],
+      timelineStart: 0,
+      timelineEnd: 20,
+      tasks: [
+        { id: 'source', rowIndex: 0, start: 2, end: 5, label: 'Source' },
+        { id: 'target', rowIndex: 1, start: 8, end: 13, label: 'Target', dependencies: [{ taskId: 'source', type: 'FS' }] },
+      ],
+    };
+
+    const frame = buildFrame(
+      scene,
+      buildTaskIndex(scene.tasks),
+      { ...createCamera(800, 240), zoomX: 16, zoomY: 1, scrollX: 0, scrollY: 0 },
+      atlas,
+      layout,
+      {
+        selectedTaskId: null,
+        hoveredTaskId: null,
+        selectedDependencyId: null,
+        hoveredDependencyId: null,
+      },
+      {
+        rowPitch: 30,
+        barHeight: 16,
+        milestoneSize: 12,
+        rowPadding: 7,
+        labelPadding: 8,
+        gridPadding: 0,
+        overscanRows: 1,
+        overscanPx: 80,
+        renderSelectedDependencies: true,
+      },
+    );
+
+    const lastSegment = frame.dependencyPaths[0]?.segments.at(-1);
+    expect(lastSegment).toBeDefined();
+    expect((lastSegment?.x2 ?? 0) - (lastSegment?.x1 ?? 0)).toBeGreaterThan(0.3);
+  });
+
+  it('keeps close typed FS links from detouring above the source row', () => {
+    const atlas = makeTestAtlas();
+    const layout = new TextLayoutEngine(atlas);
+    const scene = {
+      rowLabels: ['Row 1', 'Row 2'],
+      timelineStart: 0,
+      timelineEnd: 12,
+      tasks: [
+        { id: 'source', rowIndex: 0, start: 2, end: 4, label: 'Source' },
+        { id: 'target', rowIndex: 1, start: 5, end: 9, label: 'Target', dependencies: [{ taskId: 'source', type: 'FS' }] },
+      ],
+    };
+
+    const frame = buildFrame(
+      scene,
+      buildTaskIndex(scene.tasks),
+      { ...createCamera(800, 240), zoomX: 12, zoomY: 1, scrollX: 0, scrollY: 0 },
+      atlas,
+      layout,
+      {
+        selectedTaskId: null,
+        hoveredTaskId: null,
+        selectedDependencyId: null,
+        hoveredDependencyId: null,
+      },
+      {
+        rowPitch: 30,
+        barHeight: 16,
+        milestoneSize: 12,
+        rowPadding: 7,
+        labelPadding: 8,
+        gridPadding: 0,
+        overscanRows: 1,
+        overscanPx: 80,
+        renderSelectedDependencies: true,
+      },
+      {},
+      {
+        ...DEFAULT_DISPLAY_OPTIONS,
+        dependencies: {
+          ...DEFAULT_DISPLAY_OPTIONS.dependencies,
+          showArrowheads: false,
+        },
+      },
+    );
+
+    const minY = Math.min(
+      ...((frame.dependencyPaths[0]?.segments ?? []).flatMap((segment) => [segment.y1, segment.y2])),
+    );
+    expect(minY).toBeGreaterThanOrEqual(15 - 0.001);
+  });
+
+  it('clusters compatible typed dependencies into a shared target-side trunk', () => {
+    const atlas = makeTestAtlas();
+    const layout = new TextLayoutEngine(atlas);
+    const scene = {
+      rowLabels: ['Row 1', 'Row 2', 'Row 3'],
+      timelineStart: 0,
+      timelineEnd: 100,
+      tasks: [
+        { id: 'a', rowIndex: 0, start: 0, end: 20, label: 'A' },
+        { id: 'b', rowIndex: 1, start: 6, end: 24, label: 'B' },
+        { id: 'target', rowIndex: 2, start: 40, end: 60, label: 'Target', dependencies: [{ taskId: 'a', type: 'FS' }, { taskId: 'b', type: 'FS' }] },
+      ],
+    };
+    const camera = { ...createCamera(800, 260), zoomX: 2, zoomY: 1, scrollX: 0, scrollY: 0 };
+    const frame = buildFrame(
+      scene,
+      buildTaskIndex(scene.tasks),
+      camera,
+      atlas,
+      layout,
+      {
+        selectedTaskId: null,
+        hoveredTaskId: null,
+        selectedDependencyId: null,
+        hoveredDependencyId: null,
+      },
+      {
+        rowPitch: 30,
+        barHeight: 16,
+        milestoneSize: 12,
+        rowPadding: 7,
+        labelPadding: 8,
+        gridPadding: 0,
+        overscanRows: 1,
+        overscanPx: 80,
+        renderSelectedDependencies: true,
+      },
+    );
+
+    expect(frame.dependencyPaths).toHaveLength(2);
+    expect(frame.dependencyTriangles.count).toBe(1);
+
+    const sharedSegment = frame.dependencyPaths[0]?.segments.find((segment) => {
+      const alsoInOtherPath = frame.dependencyPaths[1]?.segments.some((candidate) =>
+        candidate.x1 === segment.x1 &&
+        candidate.y1 === segment.y1 &&
+        candidate.x2 === segment.x2 &&
+        candidate.y2 === segment.y2,
+      );
+      const inFirstHitSegments = frame.dependencyPaths[0]?.hitSegments?.some((candidate) =>
+        candidate.x1 === segment.x1 &&
+        candidate.y1 === segment.y1 &&
+        candidate.x2 === segment.x2 &&
+        candidate.y2 === segment.y2,
+      ) ?? false;
+      const inSecondHitSegments = frame.dependencyPaths[1]?.hitSegments?.some((candidate) =>
+        candidate.x1 === segment.x1 &&
+        candidate.y1 === segment.y1 &&
+        candidate.x2 === segment.x2 &&
+        candidate.y2 === segment.y2,
+      ) ?? false;
+
+      return alsoInOtherPath && !inFirstHitSegments && !inSecondHitSegments;
+    });
+
+    expect(sharedSegment).toBeDefined();
+    expect(frame.dependencyPaths[0]?.hitSegments?.some((segment) =>
+      segment.x1 === sharedSegment?.x1 &&
+      segment.y1 === sharedSegment?.y1 &&
+      segment.x2 === sharedSegment?.x2 &&
+      segment.y2 === sharedSegment?.y2,
+    ) ?? false).toBe(false);
+    expect(frame.dependencyPaths[1]?.hitSegments?.some((segment) =>
+      segment.x1 === sharedSegment?.x1 &&
+      segment.y1 === sharedSegment?.y1 &&
+      segment.x2 === sharedSegment?.x2 &&
+      segment.y2 === sharedSegment?.y2,
+    ) ?? false).toBe(false);
+  });
+
+  it('can disable typed dependency clustering', () => {
+    const atlas = makeTestAtlas();
+    const layout = new TextLayoutEngine(atlas);
+    const scene = {
+      rowLabels: ['Row 1', 'Row 2', 'Row 3'],
+      timelineStart: 0,
+      timelineEnd: 100,
+      tasks: [
+        { id: 'a', rowIndex: 0, start: 0, end: 20, label: 'A' },
+        { id: 'b', rowIndex: 1, start: 6, end: 24, label: 'B' },
+        { id: 'target', rowIndex: 2, start: 40, end: 60, label: 'Target', dependencies: [{ taskId: 'a', type: 'FS' }, { taskId: 'b', type: 'FS' }] },
+      ],
+    };
+
+    const frame = buildFrame(
+      scene,
+      buildTaskIndex(scene.tasks),
+      { ...createCamera(800, 260), zoomX: 2, zoomY: 1, scrollX: 0, scrollY: 0 },
+      atlas,
+      layout,
+      {
+        selectedTaskId: null,
+        hoveredTaskId: null,
+        selectedDependencyId: null,
+        hoveredDependencyId: null,
+      },
+      {
+        rowPitch: 30,
+        barHeight: 16,
+        milestoneSize: 12,
+        rowPadding: 7,
+        labelPadding: 8,
+        gridPadding: 0,
+        overscanRows: 1,
+        overscanPx: 80,
+        renderSelectedDependencies: true,
+      },
+      {},
+      {
+        ...DEFAULT_DISPLAY_OPTIONS,
+        dependencies: {
+          ...DEFAULT_DISPLAY_OPTIONS.dependencies,
+          clusterPaths: false,
+        },
+      },
+    );
+
+    expect(frame.dependencyPaths.map((path) => [path.id, path.dependencyType, path.dependencyIndex])).toEqual([
+      ['a->target:FS', 'FS', 0],
+      ['b->target:FS', 'FS', 1],
+    ]);
+    expect(frame.dependencyTriangles.count).toBe(2);
+  });
+
   it('keeps the directly-below routing topology stable across zoom levels', () => {
     const atlas = makeTestAtlas();
     const layout = new TextLayoutEngine(atlas);

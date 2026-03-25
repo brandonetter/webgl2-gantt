@@ -122,5 +122,6 @@ describe('config normalization', () => {
     expect(config.display.header.textSizePx).toBe(16);
     expect(config.display.dependencies.showArrowheads).toBe(false);
     expect(config.display.dependencies.cornerRadiusPx).toBe(12);
+    expect(config.display.dependencies.clusterPaths).toBe(true);
   });
 });

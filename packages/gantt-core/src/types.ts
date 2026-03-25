@@ -5,6 +5,7 @@ import type {
   GanttColor,
   GanttDisplayConfig,
   FrameScene,
+  GanttDependencyRef,
   GanttScene,
   GanttTask,
   NormalizedGanttDisplayConfig,
@@ -132,7 +133,7 @@ export type GanttExportedTask = {
   rowIndex: number;
   label: string;
   milestone: boolean;
-  dependencies: string[];
+  dependencies: GanttDependencyRef[];
   startDate: string;
   endDate: string;
   durationDays: number;
@@ -287,6 +288,7 @@ export type GanttSafeApi = {
   getCameraSnapshot: () => Readonly<CameraState>;
   getSelection: () => Readonly<PluginSelectionState>;
   setSelectionByTaskId: (taskId: string | null) => void;
+  setSelectionByDependencyId: (dependencyId: string | null) => void;
   setSelectionByTaskIds: (taskIds: string[], primaryTaskId?: string | null) => void;
   getInteractionState: () => Readonly<GanttInteractionState>;
   setInteractionMode: (mode: GanttInteractionMode) => void;
@@ -514,6 +516,7 @@ export type GanttHostController = {
   registerCleanup: (callback: () => void) => void;
   getSelection: () => PluginSelectionState;
   setSelectionByTaskId: (taskId: string | null) => void;
+  setSelectionByDependencyId: (dependencyId: string | null) => void;
   setSelectionByTaskIds: (taskIds: string[], primaryTaskId?: string | null) => void;
   setSelectionByScreenPoint: (x: number, y: number) => void;
   previewSelectionByTaskIds: (taskIds: string[], primaryTaskId?: string | null) => void;

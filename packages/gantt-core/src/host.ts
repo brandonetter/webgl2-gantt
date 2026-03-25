@@ -3,6 +3,7 @@ import {
   buildTaskIndex,
   computeVisibleTimeWindow,
   createCamera,
+  getDependencyTaskId,
   GlyphInstanceWriter,
   LineInstanceWriter,
   panCamera,
@@ -521,7 +522,7 @@ function collectFocusTasks(
   tasks.set(task.id, task);
 
   for (const dependencyId of task.dependencies ?? []) {
-    const dependency = byId.get(dependencyId);
+    const dependency = byId.get(getDependencyTaskId(dependencyId));
     if (dependency) {
       tasks.set(dependency.id, dependency);
     }
@@ -653,6 +654,7 @@ class GanttHostImpl implements GanttHostController {
         getCameraSnapshot: () => this.camera,
         getSelection: () => this.getSelection(),
         setSelectionByTaskId: (taskId) => this.setSelectionByTaskId(taskId),
+        setSelectionByDependencyId: (dependencyId) => this.setSelectionByDependencyId(dependencyId),
         setSelectionByTaskIds: (taskIds, primaryTaskId) => this.setSelectionByTaskIds(taskIds, primaryTaskId),
         getInteractionState: () => this.getInteractionState(),
         setInteractionMode: (mode) => this.setInteractionMode(mode),
@@ -722,11 +724,12 @@ class GanttHostImpl implements GanttHostController {
     const dependentsById = new Map<string, GanttTask[]>();
     for (const task of tasks) {
       for (const dependencyId of task.dependencies ?? []) {
-        const dependents = dependentsById.get(dependencyId);
+        const sourceTaskId = getDependencyTaskId(dependencyId);
+        const dependents = dependentsById.get(sourceTaskId);
         if (dependents) {
           dependents.push(task);
         } else {
-          dependentsById.set(dependencyId, [task]);
+          dependentsById.set(sourceTaskId, [task]);
         }
       }
     }
@@ -1841,6 +1844,16 @@ class GanttHostImpl implements GanttHostController {
 
     const task = this.getRenderIndex().byId.get(taskId) ?? null;
     void this.setSelection(task, null);
+  }
+
+  setSelectionByDependencyId(dependencyId: string | null): void {
+    if (!dependencyId) {
+      void this.setSelection(null, null);
+      return;
+    }
+
+    const dependency = this.frame?.dependencyPaths.find((path) => path.id === dependencyId) ?? null;
+    void this.setSelection(null, dependency);
   }
 
   setSelectionByTaskIds(taskIds: string[], primaryTaskId?: string | null): void {

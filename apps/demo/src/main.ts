@@ -1,8 +1,13 @@
 import './styles.css';
 import './themes.css';
 import {
+  cloneDependencyRef,
   createGanttHost,
+  getDependencyTaskId,
   type GanttConfig,
+  type DependencyPath,
+  type GanttDependencyType,
+  type GanttDependencyRef,
   type GanttHost,
   type GanttScene,
   type GanttTask,
@@ -22,14 +27,16 @@ const DEMO_CHART_HEIGHT_SCALE = 1.3;
 
 const PAPER_LIGHT_THEME = getDemoTheme('paper-light').className;
 
-type MountId = 'timeline-demo' | 'editing-demo' | 'json-plugin';
+type MountId = 'timeline-demo' | 'editing-demo' | 'dependency-demo' | 'json-plugin';
+type GanttController = ReturnType<GanttHost['getController']>;
+type DependencyLocator = { targetTaskId: string; dependencyIndex: number };
 type SceneTaskInput = {
   id: string;
   rowIndex: number;
   startDate: string;
   endDate: string;
   label: string;
-  dependencies?: string[];
+  dependencies?: GanttDependencyRef[];
   milestone?: boolean;
 } & Record<string, unknown>;
 
@@ -189,8 +196,134 @@ const extensionScene = createScene(
   ],
 );
 
+const dependencyWorkbenchScene = createScene(
+  [
+    'FS: Scope',
+    'FS: Build',
+    'FS: Release',
+    '',
+    'SS: Kickoff',
+    'SS: Design',
+    'SS: QA',
+    '',
+    'FF: Build',
+    'FF: QA',
+    'FF: Sign-off',
+    '',
+    'SF: Launch Gate',
+    'SF: Support',
+    'SF: Closeout',
+  ],
+  [
+    {
+      id: 'ex1-scope',
+      rowIndex: 0,
+      startDate: '2026-11-02',
+      endDate: '2026-11-04',
+      label: 'Scope',
+    },
+    {
+      id: 'ex1-build',
+      rowIndex: 1,
+      startDate: '2026-11-05',
+      endDate: '2026-11-09',
+      label: 'Build',
+      dependencies: [{ taskId: 'ex1-scope', type: 'FS' }],
+    },
+    {
+      id: 'ex1-release',
+      rowIndex: 2,
+      startDate: '2026-11-10',
+      endDate: '2026-11-11',
+      label: 'Release',
+      dependencies: [{ taskId: 'ex1-build', type: 'FS' }],
+    },
+    {
+      id: 'ex2-kickoff',
+      rowIndex: 4,
+      startDate: '2026-11-03',
+      endDate: '2026-11-04',
+      label: 'Kickoff',
+    },
+    {
+      id: 'ex2-design',
+      rowIndex: 5,
+      startDate: '2026-11-03',
+      endDate: '2026-11-07',
+      label: 'Design stream',
+      dependencies: [{ taskId: 'ex2-kickoff', type: 'SS' }],
+    },
+    {
+      id: 'ex2-qa',
+      rowIndex: 6,
+      startDate: '2026-11-03',
+      endDate: '2026-11-05',
+      label: 'QA prep',
+      dependencies: [{ taskId: 'ex2-kickoff', type: 'SS' }],
+    },
+    {
+      id: 'ex3-build',
+      rowIndex: 8,
+      startDate: '2026-11-10',
+      endDate: '2026-11-16',
+      label: 'Build',
+    },
+    {
+      id: 'ex3-qa',
+      rowIndex: 9,
+      startDate: '2026-11-12',
+      endDate: '2026-11-16',
+      label: 'QA completion',
+      dependencies: [{ taskId: 'ex3-build', type: 'FF' }],
+    },
+    {
+      id: 'ex3-signoff',
+      rowIndex: 10,
+      startDate: '2026-11-14',
+      endDate: '2026-11-16',
+      label: 'Sign-off',
+      dependencies: [{ taskId: 'ex3-build', type: 'FF' }],
+    },
+    {
+      id: 'ex4-launch',
+      rowIndex: 12,
+      startDate: '2026-11-18',
+      endDate: '2026-11-19',
+      label: 'Launch gate',
+    },
+    {
+      id: 'ex4-support',
+      rowIndex: 13,
+      startDate: '2026-11-10',
+      endDate: '2026-11-18',
+      label: 'Support sunset',
+      dependencies: [{ taskId: 'ex4-launch', type: 'SF' }],
+    },
+    {
+      id: 'ex4-closeout',
+      rowIndex: 14,
+      startDate: '2026-11-20',
+      endDate: '2026-11-21',
+      label: 'Closeout',
+      dependencies: [{ taskId: 'ex4-launch', type: 'FS' }],
+    },
+  ],
+);
+
+const DEPENDENCY_TYPE_OPTIONS: GanttDependencyType[] = ['FS', 'SS', 'FF', 'SF'];
+const DETAIL_DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+  timeZone: 'UTC',
+});
+
 function toUtcDaySerial(isoDate: string): number {
   return Math.floor(new Date(`${isoDate}T00:00:00Z`).getTime() / DAY_MS);
+}
+
+function formatDaySerial(daySerial: number): string {
+  return DETAIL_DATE_FORMATTER.format(new Date(Math.floor(daySerial) * DAY_MS));
 }
 
 function createScene(rowLabels: string[], tasks: SceneTaskInput[]): GanttScene {
@@ -262,7 +395,20 @@ function expandScene(
       }
 
       task.dependencies = sourceTask.dependencies.map(
-        (dependency) => taskIdMap.get(dependency) ?? dependency,
+        (dependency) => {
+          const dependencyTaskId = getDependencyTaskId(dependency);
+          const remappedTaskId = taskIdMap.get(dependencyTaskId);
+          if (!remappedTaskId) {
+            return cloneDependencyRef(dependency);
+          }
+
+          return typeof dependency === 'string'
+            ? remappedTaskId
+            : {
+                ...dependency,
+                taskId: remappedTaskId,
+              };
+        },
       );
     });
   }
@@ -398,7 +544,21 @@ function buildPage(): string {
         </div>
       </section>
 
-      <section class="demo-section reveal" id="plugins" style="--delay: 260ms;">
+      <section class="demo-section demo-section--panel reveal" id="dependencies" style="--delay: 260ms;">
+        <div class="demo-frame demo-frame--light ${getDemoTheme('warm').className}">
+          <div class="dependency-demo-shell">
+            <div class="demo-chart demo-chart--themed dependency-demo-chart" data-demo-mount="dependency-demo" aria-label="Typed dependency demo"></div>
+            <aside class="dependency-side-panel" data-dependency-panel aria-label="Dependency workbench">
+              <p class="dependency-side-panel__eyebrow">Dependency Workbench</p>
+              <h2 class="dependency-side-panel__title">Typed links, live.</h2>
+              <p class="dependency-side-panel__lede">Select a task for schedule details, or click a dependency line to retag that exact link as <code>FS</code>, <code>SS</code>, <code>FF</code>, or <code>SF</code>.</p>
+              <div class="dependency-side-panel__content" data-dependency-panel-content></div>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <section class="demo-section reveal" id="plugins" style="--delay: 320ms;">
         <div class="demo-copy">
           <p class="section-label">Extensibility</p>
           <h2>Draw and interact from extensions.</h2>
@@ -493,6 +653,404 @@ function createPluginConfig(
   );
 }
 
+function createDependencyWorkbenchConfig(
+  msdfManifestUrls: Record<string, string>,
+): GanttConfig {
+  return createDemoConfig(
+    dependencyWorkbenchScene,
+    'warm',
+    msdfManifestUrls,
+    {
+      title: 'Typed dependency workbench',
+      height: tallerDemoHeight(418),
+      defaultMode: 'select',
+      statusText: 'Select lines or tasks from the panel, or switch to edit mode to move and resize the demo tasks.',
+    },
+  );
+}
+
+function getDependencyPanel(): HTMLElement {
+  const element = appRoot.querySelector('[data-dependency-panel]');
+  if (!(element instanceof HTMLElement)) {
+    throw new Error('Missing dependency panel.');
+  }
+  return element;
+}
+
+function getDependencyRefType(
+  dependency: GanttDependencyRef,
+): GanttDependencyType | undefined {
+  return typeof dependency === 'string' ? undefined : dependency.type;
+}
+
+function buildDependencyBaseId(
+  sourceTaskId: string,
+  targetTaskId: string,
+  type: GanttDependencyType | undefined,
+): string {
+  return type ? `${sourceTaskId}->${targetTaskId}:${type}` : `${sourceTaskId}->${targetTaskId}`;
+}
+
+function resolveDependencyLocatorFromPath(
+  controller: GanttController,
+  path: DependencyPath | null,
+): DependencyLocator | null {
+  if (!path) {
+    return null;
+  }
+
+  const targetTask = controller.getTask(path.targetTaskId);
+  const dependencies = targetTask?.dependencies ?? [];
+  if (dependencies.length === 0) {
+    return null;
+  }
+
+  const indexedPathSlot = path.dependencyIndex;
+  if (Number.isInteger(indexedPathSlot ?? Number.NaN) && dependencies[indexedPathSlot ?? -1]) {
+    return {
+      targetTaskId: path.targetTaskId,
+      dependencyIndex: indexedPathSlot ?? 0,
+    };
+  }
+
+  const suffixMatch = path.id.match(/#(\d+)$/);
+  const baseId = suffixMatch && typeof suffixMatch.index === 'number'
+    ? path.id.slice(0, suffixMatch.index)
+    : path.id;
+  const ordinal = suffixMatch ? Number.parseInt(suffixMatch[1] ?? '1', 10) : 1;
+  let matchingOrdinal = 0;
+
+  for (const [dependencyIndex, dependency] of dependencies.entries()) {
+    const candidateId = buildDependencyBaseId(
+      getDependencyTaskId(dependency),
+      path.targetTaskId,
+      getDependencyRefType(dependency),
+    );
+    if (candidateId !== baseId) {
+      continue;
+    }
+
+    matchingOrdinal += 1;
+    if (matchingOrdinal === ordinal) {
+      return {
+        targetTaskId: path.targetTaskId,
+        dependencyIndex,
+      };
+    }
+  }
+
+  const fallbackIndex = dependencies.findIndex((dependency) => (
+    getDependencyTaskId(dependency) === path.sourceTaskId &&
+    getDependencyRefType(dependency) === path.dependencyType
+  ));
+  if (fallbackIndex < 0) {
+    return null;
+  }
+
+  return {
+    targetTaskId: path.targetTaskId,
+    dependencyIndex: fallbackIndex,
+  };
+}
+
+function renderDependencyPanelContent(
+  panel: HTMLElement,
+  selection: {
+    task: GanttTask | null;
+    dependency: {
+      targetTaskId: string;
+      dependencyIndex: number;
+      renderedPath: DependencyPath | null;
+    } | null;
+  },
+  taskLookup: Map<string, GanttTask>,
+): void {
+  const content = panel.querySelector('[data-dependency-panel-content]');
+  if (!(content instanceof HTMLElement)) {
+    throw new Error('Missing dependency panel content mount.');
+  }
+
+  if (selection.dependency) {
+    const dependency = selection.dependency;
+    const targetTask = taskLookup.get(dependency.targetTaskId);
+    const liveDependency = targetTask?.dependencies?.[dependency.dependencyIndex];
+    if (!targetTask || !liveDependency) {
+      content.innerHTML = `
+        <section class="dependency-panel-card dependency-panel-card--empty">
+          <p class="dependency-panel-card__title">Connection no longer available</p>
+          <p class="dependency-panel-card__meta">Select a task or click another dependency line to continue editing links.</p>
+        </section>
+      `;
+      return;
+    }
+
+    const sourceTaskId = getDependencyTaskId(liveDependency);
+    const sourceTask = taskLookup.get(sourceTaskId);
+    const currentType = typeof liveDependency === 'string' ? 'FS' : liveDependency.type ?? 'FS';
+    const renderedPath = dependency.renderedPath;
+    const connectionLabel = renderedPath?.id ?? `${sourceTaskId}->${targetTask.id}:${currentType}`;
+
+    content.innerHTML = `
+      <section class="dependency-panel-card">
+        <div class="dependency-task-summary">
+          <div>
+            <p class="dependency-task-summary__eyebrow">Selected Connection</p>
+            <h3 class="dependency-task-summary__title">${sourceTask?.label ?? sourceTaskId} to ${targetTask.label}</h3>
+          </div>
+          <span class="dependency-task-summary__badge">${connectionLabel}</span>
+        </div>
+        <dl class="dependency-facts">
+          <div><dt>Source</dt><dd>${sourceTaskId}</dd></div>
+          <div><dt>Target</dt><dd>${targetTask.id}</dd></div>
+          <div><dt>Type</dt><dd>${currentType}</dd></div>
+          <div><dt>Segments</dt><dd>${renderedPath?.segments.length ?? 'Rerouting'}</dd></div>
+        </dl>
+      </section>
+      <section class="dependency-panel-card">
+        <div class="dependency-panel-card__header">
+          <p class="dependency-panel-card__title">Swap Link Type</p>
+          <p class="dependency-panel-card__meta">Selecting a connection targets one exact dependency and keeps that link selected after the route updates.</p>
+        </div>
+        <label class="dependency-link-row">
+          <span class="dependency-link-row__copy">
+            <span class="dependency-link-row__title">${sourceTask?.label ?? sourceTaskId} -> ${targetTask.label}</span>
+            <span class="dependency-link-row__meta">Dependency slot ${dependency.dependencyIndex + 1} on ${targetTask.id}</span>
+          </span>
+          <select
+            class="dependency-link-row__select"
+            data-selected-dependency="true"
+            data-target-task-id="${targetTask.id}"
+            data-dependency-index="${dependency.dependencyIndex}"
+            aria-label="Dependency type for selected connection"
+          >
+            ${DEPENDENCY_TYPE_OPTIONS.map((option) => `<option value="${option}"${option === currentType ? ' selected' : ''}>${option}</option>`).join('')}
+          </select>
+        </label>
+      </section>
+    `;
+    return;
+  }
+
+  const task = selection.task;
+  if (!task) {
+    content.innerHTML = `
+      <section class="dependency-panel-card dependency-panel-card--empty">
+        <p class="dependency-panel-card__title">Nothing selected</p>
+        <p class="dependency-panel-card__meta">Click a task for schedule details or click a dependency line to edit that exact connection type.</p>
+      </section>
+    `;
+    return;
+  }
+
+  const dependencies = task.dependencies ?? [];
+  const dependencyMarkup = dependencies.length > 0
+    ? dependencies.map((dependency, index) => {
+      const sourceTask = taskLookup.get(getDependencyTaskId(dependency));
+      const type = typeof dependency === 'string' ? 'Legacy' : dependency.type ?? 'Legacy';
+      return `
+        <label class="dependency-link-row">
+          <span class="dependency-link-row__copy">
+            <span class="dependency-link-row__title">${sourceTask?.label ?? getDependencyTaskId(dependency)}</span>
+            <span class="dependency-link-row__meta">${getDependencyTaskId(dependency)} -> ${task.id}</span>
+          </span>
+          <select class="dependency-link-row__select" data-dependency-index="${index}" aria-label="Dependency type for ${sourceTask?.label ?? getDependencyTaskId(dependency)}">
+            ${DEPENDENCY_TYPE_OPTIONS.map((option) => `<option value="${option}"${option === type ? ' selected' : ''}>${option}</option>`).join('')}
+          </select>
+        </label>
+      `;
+    }).join('')
+    : `
+      <section class="dependency-panel-card dependency-panel-card--empty">
+        <p class="dependency-panel-card__title">No predecessors</p>
+        <p class="dependency-panel-card__meta">This task has no inbound dependencies. Select another task to experiment with typed links.</p>
+      </section>
+    `;
+
+  content.innerHTML = `
+    <section class="dependency-panel-card">
+      <div class="dependency-task-summary">
+        <div>
+          <p class="dependency-task-summary__eyebrow">Selected Task</p>
+          <h3 class="dependency-task-summary__title">${task.label}</h3>
+        </div>
+        <span class="dependency-task-summary__badge">${task.id}</span>
+      </div>
+      <dl class="dependency-facts">
+        <div><dt>Row</dt><dd>${task.rowIndex + 1}</dd></div>
+        <div><dt>Start</dt><dd>${formatDaySerial(task.start)}</dd></div>
+        <div><dt>End</dt><dd>${formatDaySerial(task.end - 1)}</dd></div>
+        <div><dt>Duration</dt><dd>${task.end - task.start}d</dd></div>
+        <div><dt>Milestone</dt><dd>${task.milestone ? 'Yes' : 'No'}</dd></div>
+        <div><dt>Links</dt><dd>${dependencies.length}</dd></div>
+      </dl>
+    </section>
+    <section class="dependency-panel-card">
+      <div class="dependency-panel-card__header">
+        <p class="dependency-panel-card__title">Incoming Links</p>
+        <p class="dependency-panel-card__meta">You can edit here from the selected task, or click an arrow to edit just one connection directly.</p>
+      </div>
+      <div class="dependency-links-list">
+        ${dependencyMarkup}
+      </div>
+    </section>
+  `;
+}
+
+function wireDependencyWorkbench(
+  host: GanttHost,
+  panel: HTMLElement,
+): void {
+  const controller = host.getController();
+  let rafId = 0;
+  let lastSelectionSignature = '';
+  let pinnedDependencyLocator: DependencyLocator | null = null;
+
+  const resolvePinnedDependencyPath = (): DependencyPath | null => {
+    if (!pinnedDependencyLocator) {
+      return null;
+    }
+
+    return controller.getCurrentFrame()?.dependencyPaths.find((path) =>
+      path.targetTaskId === pinnedDependencyLocator?.targetTaskId &&
+      path.dependencyIndex === pinnedDependencyLocator?.dependencyIndex,
+    ) ?? null;
+  };
+
+  const restoreDependencySelection = (
+    targetTaskId: string,
+    dependencyIndex: number,
+    attemptsRemaining = 8,
+  ): void => {
+    const nextPath = controller.getCurrentFrame()?.dependencyPaths.find((path) =>
+      path.targetTaskId === targetTaskId &&
+      path.dependencyIndex === dependencyIndex,
+    );
+    if (nextPath) {
+      controller.setSelectionByDependencyId(nextPath.id);
+      return;
+    }
+
+    if (attemptsRemaining <= 0) {
+      controller.setSelectionByTaskId(targetTaskId);
+      return;
+    }
+
+    window.requestAnimationFrame(() => restoreDependencySelection(targetTaskId, dependencyIndex, attemptsRemaining - 1));
+  };
+
+  const refresh = (): void => {
+    const selection = controller.getSelection();
+    const selectedTask = selection.selectedTask;
+    const resolvedSelectedDependency = resolveDependencyLocatorFromPath(
+      controller,
+      selection.selectedDependency,
+    );
+
+    if (resolvedSelectedDependency) {
+      pinnedDependencyLocator = resolvedSelectedDependency;
+    } else if (
+      selectedTask &&
+      (!pinnedDependencyLocator || selectedTask.id !== pinnedDependencyLocator.targetTaskId)
+    ) {
+      pinnedDependencyLocator = null;
+    }
+    const pinnedDependencyTargetTask = pinnedDependencyLocator
+      ? controller.getTask(pinnedDependencyLocator.targetTaskId)
+      : null;
+    const pinnedDependencyRef = pinnedDependencyLocator
+      ? pinnedDependencyTargetTask?.dependencies?.[pinnedDependencyLocator.dependencyIndex]
+      : null;
+    const renderedPinnedPath = resolvePinnedDependencyPath();
+    const signature = pinnedDependencyLocator && pinnedDependencyRef
+      ? `dep:${pinnedDependencyLocator.targetTaskId}:${pinnedDependencyLocator.dependencyIndex}:${JSON.stringify(pinnedDependencyRef)}:${renderedPinnedPath?.id ?? ''}`
+      : selectedTask
+        ? `task:${selectedTask.id}:${JSON.stringify(selectedTask.dependencies ?? [])}:${selectedTask.start}:${selectedTask.end}:${selectedTask.rowIndex}`
+        : 'none';
+    if (signature !== lastSelectionSignature) {
+      lastSelectionSignature = signature;
+      renderDependencyPanelContent(
+        panel,
+        {
+          task: selectedTask,
+          dependency: pinnedDependencyLocator
+            ? {
+                targetTaskId: pinnedDependencyLocator.targetTaskId,
+                dependencyIndex: pinnedDependencyLocator.dependencyIndex,
+                renderedPath: renderedPinnedPath,
+              }
+            : null,
+        },
+        new Map(controller.getTasks().map((task) => [task.id, task] as const)),
+      );
+    }
+    rafId = window.requestAnimationFrame(refresh);
+  };
+
+  const handleChange = (event: Event): void => {
+    const select = event.target;
+    if (!(select instanceof HTMLSelectElement)) {
+      return;
+    }
+
+    const dependencyIndex = Number.parseInt(select.dataset.dependencyIndex ?? '', 10);
+    const targetTaskId = select.dataset.targetTaskId;
+    const fallbackSelectedTask = controller.getSelection().selectedTask;
+    const targetTask = targetTaskId ? controller.getTask(targetTaskId) : fallbackSelectedTask;
+    if (!targetTask || !Number.isInteger(dependencyIndex)) {
+      return;
+    }
+
+    const currentDependencies = targetTask.dependencies ?? [];
+    if (!currentDependencies[dependencyIndex]) {
+      return;
+    }
+
+    const nextType = select.value as GanttDependencyType;
+    const nextDependencies = currentDependencies.map((dependency, index) => {
+      if (index !== dependencyIndex) {
+        return cloneDependencyRef(dependency);
+      }
+
+      return {
+        taskId: getDependencyTaskId(dependency),
+        type: nextType,
+      };
+    });
+
+    const editingSelectedDependency = select.dataset.selectedDependency === 'true';
+    controller.updateTask(targetTask.id, { dependencies: nextDependencies });
+    controller.requestRender();
+
+    if (editingSelectedDependency) {
+      pinnedDependencyLocator = {
+        targetTaskId: targetTask.id,
+        dependencyIndex,
+      };
+      restoreDependencySelection(targetTask.id, dependencyIndex);
+      return;
+    }
+
+    pinnedDependencyLocator = null;
+    controller.setSelectionByTaskId(targetTask.id);
+  };
+
+  panel.addEventListener('change', handleChange);
+  controller.registerCleanup(() => {
+    panel.removeEventListener('change', handleChange);
+    window.cancelAnimationFrame(rafId);
+  });
+
+  renderDependencyPanelContent(
+    panel,
+    {
+      task: controller.getSelection().selectedTask,
+      dependency: null,
+    },
+    new Map(controller.getTasks().map((task) => [task.id, task] as const)),
+  );
+  rafId = window.requestAnimationFrame(refresh);
+}
+
 async function mountDemo(
   target: HTMLElement,
   config: GanttConfig,
@@ -519,6 +1077,12 @@ async function boot(): Promise<void> {
         createEditingConfig(msdfManifestUrls),
       ),
     );
+    const dependencyHost = await mountDemo(
+      getMount('dependency-demo'),
+      createDependencyWorkbenchConfig(msdfManifestUrls),
+    );
+    wireDependencyWorkbench(dependencyHost, getDependencyPanel());
+    hosts.push(dependencyHost);
     hosts.push(
       await mountDemo(
         getMount('json-plugin'),

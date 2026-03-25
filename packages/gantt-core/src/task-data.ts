@@ -1,4 +1,4 @@
-import type { GanttScene, GanttTask } from './core';
+import type { GanttDependencyRef, GanttScene, GanttTask } from './core';
 
 const TASK_RESERVED_FIELDS = new Set([
   'id',
@@ -91,7 +91,7 @@ export function withTaskExtras(
     end: number;
     label: string;
     milestone?: boolean;
-    dependencies?: string[];
+    dependencies?: GanttDependencyRef[];
   },
   extras: TaskRecord,
 ): GanttTask {

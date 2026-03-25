@@ -1,4 +1,13 @@
-import { DAY_MS, type GanttScene, type GanttTask } from './core';
+import {
+  DAY_MS,
+  cloneDependencyRefs,
+  getDependencyTaskId,
+  type GanttDependencyObject,
+  type GanttDependencyRef,
+  type GanttDependencyType,
+  type GanttScene,
+  type GanttTask,
+} from './core';
 import { cloneScene, cloneTask, extractTaskExtras, mergeTaskExtras, withTaskExtras } from './task-data';
 import type {
   GanttExportedTask,
@@ -73,16 +82,40 @@ function normalizeMilestone(value: unknown, label: string): boolean | undefined 
   return value;
 }
 
-function normalizeDependencies(value: unknown, label: string): string[] | undefined {
+function normalizeDependencyType(value: unknown, label: string): GanttDependencyType | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (value === 'FS' || value === 'FF' || value === 'SF' || value === 'SS') {
+    return value;
+  }
+
+  throw new Error(`${label} must be one of FS, FF, SF, or SS when provided.`);
+}
+
+function normalizeDependencyRef(value: unknown, label: string): GanttDependencyRef {
+  if (typeof value === 'string') {
+    return normalizeTaskId(value, label);
+  }
+
+  const candidate = assertObject(value, label);
+  return {
+    taskId: normalizeTaskId(candidate.taskId, `${label}.taskId`),
+    type: normalizeDependencyType(candidate.type, `${label}.type`),
+  } satisfies GanttDependencyObject;
+}
+
+function normalizeDependencies(value: unknown, label: string): GanttDependencyRef[] | undefined {
   if (value === undefined) {
     return undefined;
   }
 
   if (!Array.isArray(value)) {
-    throw new Error(`${label} must be an array of task ids when provided.`);
+    throw new Error(`${label} must be an array of task ids or dependency refs when provided.`);
   }
 
-  const dependencies = value.map((dependencyId, index) => normalizeTaskId(dependencyId, `${label}[${index}]`));
+  const dependencies = value.map((dependency, index) => normalizeDependencyRef(dependency, `${label}[${index}]`));
   return dependencies.length > 0 ? dependencies : undefined;
 }
 
@@ -241,8 +274,8 @@ function normalizeTimelineBounds(tasks: GanttTask[]): { timelineStart: number; t
   };
 }
 
-function cloneDependencies(dependencies: string[] | undefined): string[] | undefined {
-  return dependencies ? dependencies.slice() : undefined;
+function cloneDependencies(dependencies: readonly GanttDependencyRef[] | undefined): GanttDependencyRef[] | undefined {
+  return cloneDependencyRefs(dependencies);
 }
 
 export { cloneTask, cloneScene };
@@ -360,7 +393,7 @@ export function deleteTasks(
   const remainingTasks = scene.tasks
     .filter((task) => !seenIds.has(task.id))
     .map((task) => {
-      const nextDependencies = task.dependencies?.filter((dependencyId) => !seenIds.has(dependencyId));
+      const nextDependencies = task.dependencies?.filter((dependency) => !seenIds.has(getDependencyTaskId(dependency)));
       return {
         ...cloneTask(task),
         dependencies: nextDependencies && nextDependencies.length > 0 ? nextDependencies : undefined,

@@ -195,6 +195,43 @@ describe('runtime task data helpers', () => {
         label: 'Dup 2',
       },
     ])).toThrow("Task 'dup' appears more than once in the import batch.");
+    expect(() => addTask(scene, {
+      id: 'typed-bad',
+      rowIndex: 0,
+      start: '2026-01-01',
+      end: '2026-01-01',
+      label: 'Bad Dependency',
+      dependencies: [{ taskId: 'a', type: 'BAD' as never }],
+    })).toThrow("Task input.dependencies[0].type must be one of FS, FF, SF, or SS when provided.");
+  });
+
+  it('imports, exports, and deletes mixed dependency refs', () => {
+    const emptyScene = { rowLabels: [], timelineStart: 0, timelineEnd: 0, tasks: [] };
+    const added = addTask(emptyScene, {
+      id: 'target',
+      rowIndex: 1,
+      start: '2026-03-10',
+      end: '2026-03-11',
+      label: 'Target',
+      dependencies: ['legacy-a', { taskId: 'typed-b', type: 'SS' }],
+    });
+
+    expect(added.task.dependencies).toEqual(['legacy-a', { taskId: 'typed-b', type: 'SS' }]);
+    expect(exportTasks(added.scene)[0]?.dependencies).toEqual(['legacy-a', { taskId: 'typed-b', type: 'SS' }]);
+
+    const scene = {
+      rowLabels: ['Row 1', 'Row 2', 'Row 3'],
+      timelineStart: 10,
+      timelineEnd: 30,
+      tasks: [
+        { id: 'legacy-a', rowIndex: 0, start: 10, end: 12, label: 'Legacy A' },
+        { id: 'typed-b', rowIndex: 1, start: 12, end: 16, label: 'Typed B' },
+        { id: 'target', rowIndex: 2, start: 16, end: 20, label: 'Target', dependencies: ['legacy-a', { taskId: 'typed-b', type: 'FS' }] },
+      ],
+    };
+
+    const deleted = deleteTask(scene, 'legacy-a');
+    expect(getTask(deleted.scene, 'target')?.dependencies).toEqual([{ taskId: 'typed-b', type: 'FS' }]);
   });
 
   it('preserves custom top-level task fields across add, update, import, read, and export', () => {
