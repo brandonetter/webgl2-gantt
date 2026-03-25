@@ -6,6 +6,7 @@ import {
   type GanttScene,
   type GanttTask,
 } from './core';
+import { cloneTask } from './task-data';
 import type {
   GanttTaskEditEvent,
   GanttTaskEditOperation,
@@ -35,13 +36,6 @@ function clamp(value: number, min: number, max: number): number {
 
 function sanitizeIncrementDays(value: number): number {
   return Number.isFinite(value) && value > 0 ? value : 1;
-}
-
-function cloneTask(task: GanttTask): GanttTask {
-  return {
-    ...task,
-    dependencies: task.dependencies?.slice(),
-  };
 }
 
 export function canResizeTask(task: GanttTask, editConfig: NormalizedGanttEditConfig): boolean {

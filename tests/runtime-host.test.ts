@@ -5,13 +5,22 @@ const pluginRuntimeState = vi.hoisted(() => ({
   instances: [] as Array<{ hostApi: { safeApi: Record<string, unknown> } }>,
 }));
 
+const rendererState = vi.hoisted(() => ({
+  instances: [] as Array<{ layers: Array<{ solids: number; lines: number; glyphs: number }> }>,
+}));
+
 vi.mock('../packages/gantt-core/src/font', () => ({
   createFallbackFontAtlas: () => ({
     lineHeight: 16,
     ascender: 12,
     descender: 4,
     glyphs: new Map(),
-    kernings: new Map(),
+    kerning: new Map(),
+    mode: 'alpha',
+    image: {},
+    width: 1,
+    height: 1,
+    pxRange: 0,
   }),
   loadMsdfFontAtlas: vi.fn(),
   TextLayoutEngine: class {
@@ -20,12 +29,49 @@ vi.mock('../packages/gantt-core/src/font', () => ({
     setAtlas(atlas: unknown) {
       this.atlas = atlas;
     }
+
+    getAtlas() {
+      return this.atlas as {
+        lineHeight: number;
+        ascender: number;
+        descender: number;
+      };
+    }
+
+    measure(text: string, fontPx: number) {
+      return text.length * fontPx * 0.5;
+    }
+
+    fit(text: string) {
+      return text;
+    }
+
+    appendText(sink: { appendGlyph: (...args: number[]) => void }, text: string, x: number, y: number) {
+      if (text.length === 0) {
+        return;
+      }
+      sink.appendGlyph(x, y, 10, 10, 0, 0, 1, 1, 1, 1, 1, 1);
+    }
   },
 }));
 
 vi.mock('../packages/gantt-core/src/render', () => ({
   GanttRenderer: class {
+    layers: Array<{ solids: number; lines: number; glyphs: number }> = [];
+
+    constructor() {
+      rendererState.instances.push(this);
+    }
+
     render() {}
+
+    renderLayer(layer: { solids: { count: number }; lines: { count: number }; glyphs: { count: number } }) {
+      this.layers.push({
+        solids: layer.solids.count,
+        lines: layer.lines.count,
+        glyphs: layer.glyphs.count,
+      });
+    }
   },
 }));
 
@@ -66,6 +112,7 @@ vi.mock('../packages/gantt-core/src/plugin-runtime', () => ({
 import { createGanttHost } from '../packages/gantt-core/src/host';
 
 type FakeStyle = Record<string, string>;
+type Listener = (event: Record<string, unknown>) => void;
 
 class FakeClassList {
   private readonly tokens = new Set<string>();
@@ -102,6 +149,7 @@ class FakeElement {
   children: FakeElement[] = [];
   parentElement: FakeElement | null = null;
   private html = '';
+  private readonly listeners = new Map<string, Listener[]>();
 
   constructor(readonly tagName: string) {}
 
@@ -120,6 +168,35 @@ class FakeElement {
     for (const child of children) {
       child.parentElement = this;
       this.children.push(child);
+    }
+  }
+
+  addEventListener(type: string, listener: Listener) {
+    const listeners = this.listeners.get(type) ?? [];
+    listeners.push(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  removeEventListener(type: string, listener: Listener) {
+    const listeners = this.listeners.get(type) ?? [];
+    this.listeners.set(type, listeners.filter((candidate) => candidate !== listener));
+  }
+
+  dispatchEvent(type: string, event: Record<string, unknown>) {
+    let stopped = false;
+    const payload = {
+      preventDefault: () => undefined,
+      stopImmediatePropagation: () => {
+        stopped = true;
+      },
+      ...event,
+    };
+
+    for (const listener of this.listeners.get(type) ?? []) {
+      listener(payload);
+      if (stopped) {
+        break;
+      }
     }
   }
 
@@ -142,6 +219,8 @@ class FakeElement {
 
   getBoundingClientRect() {
     return {
+      left: 0,
+      top: 0,
       width: 960,
       height: 480,
     };
@@ -151,9 +230,22 @@ class FakeElement {
 class FakeCanvasElement extends FakeElement {
   width = 0;
   height = 0;
+  private readonly capturedPointers = new Set<number>();
 
   constructor() {
     super('canvas');
+  }
+
+  setPointerCapture(pointerId: number) {
+    this.capturedPointers.add(pointerId);
+  }
+
+  releasePointerCapture(pointerId: number) {
+    this.capturedPointers.delete(pointerId);
+  }
+
+  hasPointerCapture(pointerId: number) {
+    return this.capturedPointers.has(pointerId);
   }
 
   getContext(type: string) {
@@ -176,8 +268,11 @@ function installFakeDom() {
 
   Object.assign(globalThis, {
     document,
+    HTMLElement: FakeElement,
     window: {
       devicePixelRatio: 1,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
     },
     requestAnimationFrame: vi.fn(() => 1),
     cancelAnimationFrame: vi.fn(),
@@ -186,6 +281,7 @@ function installFakeDom() {
 
 function clearFakeDom() {
   delete (globalThis as Record<string, unknown>).document;
+  delete (globalThis as Record<string, unknown>).HTMLElement;
   delete (globalThis as Record<string, unknown>).window;
   delete (globalThis as Record<string, unknown>).requestAnimationFrame;
   delete (globalThis as Record<string, unknown>).cancelAnimationFrame;
@@ -203,7 +299,7 @@ function makeScene(): GanttScene {
   };
 }
 
-async function createHost() {
+async function createHost(config = {}) {
   const root = new FakeElement('div');
   const host = await createGanttHost(root as unknown as HTMLElement, {
     data: {
@@ -225,6 +321,7 @@ async function createHost() {
       enabled: true,
       defaultMode: 'edit',
     },
+    ...config,
   });
 
   return host;
@@ -233,6 +330,7 @@ async function createHost() {
 describe('runtime task host controller', () => {
   beforeEach(() => {
     pluginRuntimeState.instances.length = 0;
+    rendererState.instances.length = 0;
     installFakeDom();
   });
 
@@ -436,6 +534,249 @@ describe('runtime task host controller', () => {
 
     expect(() => controller.deleteTask('a')).toThrow('Cannot mutate tasks while a task edit commit is pending.');
     expect(() => controller.replaceScene(makeScene())).toThrow('Cannot mutate tasks while a task edit commit is pending.');
+
+    await host.dispose();
+  });
+
+  it('registers scene transforms on the safe API and applies them without mutating the committed scene', async () => {
+    const host = await createHost();
+    const controller = host.getController();
+    const safeApi = pluginRuntimeState.instances[0]?.hostApi.safeApi as {
+      registerSceneTransform: (transform: (scene: GanttScene) => GanttScene) => () => void;
+    };
+
+    expect(typeof safeApi?.registerSceneTransform).toBe('function');
+
+    const unregister = safeApi.registerSceneTransform((scene) => ({
+      ...scene,
+      rowLabels: ['Grouped'],
+      tasks: scene.tasks.map((task) => ({
+        ...task,
+        rowIndex: 0,
+        assignedTo: task.id === 'a' ? 'Ada' : 'Grace',
+      })),
+    }));
+
+    expect(controller.getIndex().rowCount).toBe(1);
+    expect(controller.getScene().rowLabels).toEqual(['Row 1', 'Row 2']);
+    expect(controller.getTask('b')).toMatchObject({ rowIndex: 1 });
+
+    unregister();
+
+    expect(controller.getIndex().rowCount).toBe(2);
+
+    await host.dispose();
+  });
+
+  it('builds canvas layers with world-space and screen-space commands in one frame', async () => {
+    const host = await createHost();
+    const controller = host.getController();
+    const safeApi = pluginRuntimeState.instances[0]?.hostApi.safeApi as {
+      registerCanvasLayer: (layer: (context: {
+        draw: {
+          rect: (input: Record<string, unknown>) => void;
+          line: (input: Record<string, unknown>) => void;
+          text: (input: Record<string, unknown>) => void;
+        };
+      }) => void) => () => void;
+    };
+
+    safeApi.registerCanvasLayer(({ draw }) => {
+      draw.rect({
+        space: 'screen',
+        x: 12,
+        y: 18,
+        width: 80,
+        height: 24,
+        color: [1, 0.4, 0.2, 0.9],
+      });
+      draw.line({
+        space: 'world',
+        x1: 10,
+        y1: 14,
+        x2: 18,
+        y2: 14,
+        color: [0.2, 0.8, 1, 1],
+        thickness: 2,
+      });
+      draw.text({
+        space: 'screen',
+        x: 20,
+        y: 30,
+        text: 'Layer',
+        fontPx: 12,
+        color: [1, 1, 1, 1],
+      });
+    });
+
+    await (controller as unknown as { drawFrame: () => Promise<void> }).drawFrame();
+
+    expect(rendererState.instances[0]?.layers.at(-1)).toEqual({
+      solids: 1,
+      lines: 1,
+      glyphs: 1,
+    });
+
+    await host.dispose();
+  });
+
+  it('dispatches topmost canvas hit regions and suppresses built-in selection when captured', async () => {
+    const host = await createHost({
+      modules: {
+        builtins: ['selection'],
+      },
+      edit: {
+        enabled: false,
+        defaultMode: 'view',
+      },
+    });
+    const controller = host.getController();
+    const safeApi = pluginRuntimeState.instances[0]?.hostApi.safeApi as {
+      registerCanvasLayer: (layer: (context: {
+        draw: {
+          hitRegion: (input: Record<string, unknown>) => void;
+        };
+      }) => void) => () => void;
+    };
+    const events: string[] = [];
+
+    safeApi.registerCanvasLayer(({ draw }) => {
+      draw.hitRegion({
+        id: 'bottom',
+        space: 'screen',
+        x: 0,
+        y: 0,
+        width: 240,
+        height: 140,
+        onClick: () => {
+          events.push('bottom-click');
+        },
+      });
+    });
+
+    safeApi.registerCanvasLayer(({ draw }) => {
+      draw.hitRegion({
+        id: 'top',
+        space: 'screen',
+        x: 0,
+        y: 0,
+        width: 240,
+        height: 140,
+        onPointerDown: (event: { capture: () => void }) => {
+          events.push('top-down');
+          event.capture();
+        },
+        onPointerUp: (event: { capture: () => void }) => {
+          events.push('top-up');
+          event.capture();
+        },
+        onClick: (event: { capture: () => void }) => {
+          events.push('top-click');
+          event.capture();
+        },
+      });
+    });
+
+    await (controller as unknown as { drawFrame: () => Promise<void> }).drawFrame();
+
+    const canvas = controller.canvas as unknown as FakeCanvasElement;
+    canvas.dispatchEvent('pointerdown', {
+      button: 0,
+      clientX: 120,
+      clientY: 50,
+      pointerId: 1,
+    });
+    canvas.dispatchEvent('pointerup', {
+      button: 0,
+      clientX: 120,
+      clientY: 50,
+      pointerId: 1,
+    });
+    canvas.dispatchEvent('click', {
+      button: 0,
+      clientX: 120,
+      clientY: 50,
+      pointerId: 1,
+    });
+
+    expect(events).toEqual(['top-down', 'top-up', 'top-click']);
+    expect(controller.getSelection().selectedTask).toBeNull();
+
+    await host.dispose();
+  });
+
+  it('does not let move capture hijack a later click outside the region', async () => {
+    const host = await createHost();
+    const controller = host.getController();
+    const safeApi = pluginRuntimeState.instances[0]?.hostApi.safeApi as {
+      registerCanvasLayer: (layer: (context: {
+        draw: {
+          hitRegion: (input: Record<string, unknown>) => void;
+        };
+      }) => void) => () => void;
+    };
+    const events: string[] = [];
+
+    safeApi.registerCanvasLayer(({ draw }) => {
+      draw.hitRegion({
+        id: 'left',
+        space: 'screen',
+        x: 0,
+        y: 0,
+        width: 120,
+        height: 140,
+        onPointerMove: (event: { capture: () => void }) => {
+          events.push('left-move');
+          event.capture();
+        },
+        onClick: () => {
+          events.push('left-click');
+        },
+      });
+
+      draw.hitRegion({
+        id: 'right',
+        space: 'screen',
+        x: 120,
+        y: 0,
+        width: 120,
+        height: 140,
+        onClick: () => {
+          events.push('right-click');
+        },
+      });
+    });
+
+    await (controller as unknown as { drawFrame: () => Promise<void> }).drawFrame();
+
+    const canvas = controller.canvas as unknown as FakeCanvasElement;
+    canvas.dispatchEvent('pointermove', {
+      button: 0,
+      buttons: 0,
+      clientX: 60,
+      clientY: 50,
+      pointerId: 1,
+    });
+    canvas.dispatchEvent('pointerdown', {
+      button: 0,
+      clientX: 180,
+      clientY: 50,
+      pointerId: 1,
+    });
+    canvas.dispatchEvent('pointerup', {
+      button: 0,
+      clientX: 180,
+      clientY: 50,
+      pointerId: 1,
+    });
+    canvas.dispatchEvent('click', {
+      button: 0,
+      clientX: 180,
+      clientY: 50,
+      pointerId: 1,
+    });
+
+    expect(events).toEqual(['left-move', 'right-click']);
 
     await host.dispose();
   });

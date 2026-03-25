@@ -31,7 +31,7 @@ type SceneTaskInput = {
   label: string;
   dependencies?: string[];
   milestone?: boolean;
-};
+} & Record<string, unknown>;
 
 const timelineScene = createScene(
   ['Scope', 'Design', 'Build', 'QA', 'Launch', 'Review'],
@@ -133,56 +133,58 @@ const editingScene = createScene(
   ],
 );
 
-const jsonPluginScene = createScene(
-  ['Brief', 'Prototype', 'Legal', 'Pricing', 'QA', 'Release'],
+const extensionScene = createScene(
+  ['Planning', 'Design', 'Build', 'QA', 'Launch', 'Follow-up'],
   [
     {
-      id: 'json-brief',
+      id: 'extension-brief',
       rowIndex: 0,
       startDate: '2026-10-01',
       endDate: '2026-10-03',
       label: 'Release brief',
+      assignedTo: 'Ada',
     },
     {
-      id: 'json-prototype',
+      id: 'extension-design',
       rowIndex: 1,
       startDate: '2026-10-03',
       endDate: '2026-10-09',
-      label: 'Prototype handoff',
-      dependencies: ['json-brief'],
+      label: 'Design review',
+      assignedTo: 'Grace',
     },
     {
-      id: 'json-legal',
+      id: 'extension-build',
       rowIndex: 2,
       startDate: '2026-10-04',
-      endDate: '2026-10-08',
-      label: 'Legal review',
-      dependencies: ['json-brief'],
+      endDate: '2026-10-10',
+      label: 'Build pipeline',
+      assignedTo: 'June',
     },
     {
-      id: 'json-pricing',
+      id: 'extension-qa',
       rowIndex: 3,
       startDate: '2026-10-09',
       endDate: '2026-10-13',
-      label: 'Packaging and pricing',
-      dependencies: ['json-prototype', 'json-legal'],
+      label: 'QA sweep',
+      dependencies: ['extension-brief'],
+      assignedTo: 'Ada',
     },
     {
-      id: 'json-qa',
+      id: 'extension-launch',
       rowIndex: 4,
       startDate: '2026-10-14',
-      endDate: '2026-10-18',
-      label: 'Final QA',
-      dependencies: ['json-pricing'],
+      endDate: '2026-10-16',
+      label: 'Launch prep',
+      dependencies: ['extension-design'],
+      assignedTo: 'Grace',
     },
     {
-      id: 'json-release',
+      id: 'extension-followup',
       rowIndex: 5,
-      startDate: '2026-10-19',
-      endDate: '2026-10-19',
-      label: 'Release approval',
-      dependencies: ['json-qa'],
-      milestone: true,
+      startDate: '2026-10-17',
+      endDate: '2026-10-20',
+      label: 'Post-launch follow-up',
+      assignedTo: 'Unassigned',
     },
   ],
 );
@@ -192,15 +194,19 @@ function toUtcDaySerial(isoDate: string): number {
 }
 
 function createScene(rowLabels: string[], tasks: SceneTaskInput[]): GanttScene {
-  const normalizedTasks: GanttTask[] = tasks.map((task) => ({
-    id: task.id,
-    rowIndex: task.rowIndex,
-    start: toUtcDaySerial(task.startDate),
-    end: toUtcDaySerial(task.endDate) + 1,
-    label: task.label,
-    dependencies: task.dependencies?.slice(),
-    milestone: task.milestone,
-  }));
+  const normalizedTasks: GanttTask[] = tasks.map((task) => {
+    const { startDate, endDate, ...extraFields } = task;
+    return {
+      ...extraFields,
+      id: task.id,
+      rowIndex: task.rowIndex,
+      start: toUtcDaySerial(task.startDate),
+      end: toUtcDaySerial(task.endDate) + 1,
+      label: task.label,
+      dependencies: task.dependencies?.slice(),
+      milestone: task.milestone,
+    };
+  });
 
   return {
     tasks: normalizedTasks,
@@ -314,6 +320,7 @@ function createDemoConfig(
     title: string;
     height: number;
     defaultMode: 'view' | 'select' | 'edit';
+    editable?: boolean;
     plugins?: GanttConfig['plugins'];
     statusText?: string;
   },
@@ -330,7 +337,12 @@ function createDemoConfig(
         ...base.container?.toolbar,
       },
     },
-    edit: createEditConfig(options.defaultMode),
+    edit: options.editable === false
+      ? {
+          enabled: false,
+          defaultMode: 'view',
+        }
+      : createEditConfig(options.defaultMode),
     ui: {
       ...base.ui,
       title: options.title,
@@ -389,11 +401,11 @@ function buildPage(): string {
       <section class="demo-section reveal" id="plugins" style="--delay: 260ms;">
         <div class="demo-copy">
           <p class="section-label">Extensibility</p>
-          <h2>Extend the core.</h2>
-          <p>Custom modules add behavior without changing the renderer or the data model.</p>
+          <h2>Draw and interact from extensions.</h2>
+          <p>Assignee groups render in the canvas, switch between expanded and collapsed rows, and never rewrite the committed scene.</p>
         </div>
         <div class="demo-frame demo-frame--light ${getDemoTheme('standard').className}">
-          <div class="demo-chart demo-chart--themed" data-demo-mount="json-plugin" aria-label="JSON plugin demo"></div>
+          <div class="demo-chart demo-chart--themed" data-demo-mount="json-plugin" aria-label="Extension canvas demo"></div>
         </div>
       </section>
     </main>
@@ -452,7 +464,7 @@ function createPluginConfig(
   msdfManifestUrls: Record<string, string>,
 ): GanttConfig {
   return createDemoConfig(
-    expandScene(jsonPluginScene, {
+    expandScene(extensionScene, {
       copies: 3,
       dayOffset: 15,
       labelSuffixes: [' A', ' B', ' C'],
@@ -460,21 +472,20 @@ function createPluginConfig(
     'standard',
     msdfManifestUrls,
     {
-      title: 'Extensibility demo',
+      title: 'Extension canvas demo',
       height: tallerDemoHeight(438),
       defaultMode: 'view',
-      statusText: 'Extensions add behavior without changing the core.',
+      editable: false,
+      statusText: 'Click an assignee in the left pane to collapse or expand that group.',
       plugins: [
         {
           source: {
             type: 'esm',
-            url: pluginUrl('./plugins/editable-commit-log-plugin.mjs'),
+            url: pluginUrl('./plugins/assignee-group-collapse-plugin.mjs'),
           },
           idHint: 'json-plugin',
           options: {
-            panelLabel: 'Extension module',
-            accentColor: '#d57a35',
-            maxCommits: 4,
+            paneWidth: 176,
           },
         },
       ],

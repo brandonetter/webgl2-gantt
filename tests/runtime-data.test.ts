@@ -196,4 +196,127 @@ describe('runtime task data helpers', () => {
       },
     ])).toThrow("Task 'dup' appears more than once in the import batch.");
   });
+
+  it('preserves custom top-level task fields across add, update, import, read, and export', () => {
+    const emptyScene = { rowLabels: [], timelineStart: 0, timelineEnd: 0, tasks: [] };
+
+    const added = addTask(emptyScene, {
+      id: 'custom-1',
+      rowIndex: 1,
+      start: '2026-02-01',
+      end: '2026-02-03',
+      label: 'Custom Task',
+      assignedTo: 'Ada',
+      tags: ['frontend'],
+      metadata: {
+        priority: 'high',
+        estimateDays: 3,
+      },
+    });
+
+    expect(added.task).toMatchObject({
+      assignedTo: 'Ada',
+      tags: ['frontend'],
+      metadata: {
+        priority: 'high',
+        estimateDays: 3,
+      },
+    });
+
+    const updated = updateTask(added.scene, 'custom-1', {
+      assignedTo: 'Grace',
+      metadata: {
+        priority: 'critical',
+        estimateDays: 5,
+      },
+      status: 'blocked',
+    });
+
+    expect(updated.task).toMatchObject({
+      assignedTo: 'Grace',
+      tags: ['frontend'],
+      metadata: {
+        priority: 'critical',
+        estimateDays: 5,
+      },
+      status: 'blocked',
+    });
+
+    const imported = importTasks(updated.scene, [
+      {
+        id: 'custom-1',
+        rowIndex: 2,
+        start: '2026-02-04',
+        end: '2026-02-06',
+        label: 'Custom Task Updated',
+        assignedTo: 'June',
+        tags: ['frontend', 'api'],
+        metadata: {
+          priority: 'normal',
+          estimateDays: 3,
+        },
+        status: 'ready',
+      },
+      {
+        id: 'custom-2',
+        rowIndex: 3,
+        start: '2026-02-07',
+        end: '2026-02-08',
+        label: 'Second Task',
+        assignedTo: 'June',
+        metadata: {
+          priority: 'low',
+        },
+      },
+    ]);
+
+    expect(imported.updated[0]).toMatchObject({
+      id: 'custom-1',
+      assignedTo: 'June',
+      tags: ['frontend', 'api'],
+      metadata: {
+        priority: 'normal',
+        estimateDays: 3,
+      },
+      status: 'ready',
+    });
+    expect(getTask(imported.scene, 'custom-2')).toMatchObject({
+      assignedTo: 'June',
+      metadata: {
+        priority: 'low',
+      },
+    });
+    expect(exportTasks(imported.scene)[0]).toMatchObject({
+      id: 'custom-1',
+      assignedTo: 'June',
+      tags: ['frontend', 'api'],
+      metadata: {
+        priority: 'normal',
+        estimateDays: 3,
+      },
+      status: 'ready',
+    });
+  });
+
+  it('preserves custom top-level task fields on delete results and surviving tasks', () => {
+    const scene = {
+      rowLabels: ['Row 1', 'Row 2'],
+      timelineStart: 10,
+      timelineEnd: 20,
+      tasks: [
+        { id: 'a', rowIndex: 0, start: 10, end: 12, label: 'Task A', assignedTo: 'Ada', metadata: { lane: 'A' } },
+        { id: 'b', rowIndex: 1, start: 13, end: 20, label: 'Task B', dependencies: ['a'], assignedTo: 'Grace' },
+      ],
+    };
+
+    const deleted = deleteTask(scene, 'a');
+
+    expect(deleted.task).toMatchObject({
+      assignedTo: 'Ada',
+      metadata: { lane: 'A' },
+    });
+    expect(getTask(deleted.scene, 'b')).toMatchObject({
+      assignedTo: 'Grace',
+    });
+  });
 });

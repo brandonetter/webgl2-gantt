@@ -9,7 +9,7 @@ export type GanttTask = {
   label: string;
   milestone?: boolean;
   dependencies?: string[];
-};
+} & Record<string, unknown>;
 
 export type GanttScene = {
   tasks: GanttTask[];

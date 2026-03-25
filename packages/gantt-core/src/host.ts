@@ -3,11 +3,15 @@ import {
   buildTaskIndex,
   computeVisibleTimeWindow,
   createCamera,
+  GlyphInstanceWriter,
+  LineInstanceWriter,
   panCamera,
   pickDependencyAtPoint,
   pickTasksInScreenRect as pickTasksInScreenRectCore,
   pickTaskAtPoint,
   resizeCamera,
+  screenToWorld,
+  SolidInstanceWriter,
   taskWorldRect,
   worldToScreen,
   zoomCameraAt,
@@ -20,7 +24,7 @@ import {
   type TaskIndex,
 } from './core';
 import { normalizeConfig, resolveScene } from './config';
-import { createTaskEditEvent, replaceTaskInScene, replaceTasksInScene } from './edit';
+import { createTaskEditEvent, replaceTasksInScene } from './edit';
 import { createFallbackFontAtlas, loadMsdfFontAtlas, TextLayoutEngine, type FontAtlas } from './font';
 import { ModuleManager } from './module-manager';
 import { PluginRuntime } from './plugin-runtime';
@@ -37,6 +41,15 @@ import {
   updateTask as updateRuntimeTask,
 } from './runtime-data';
 import type {
+  GanttCanvasDrawApi,
+  GanttCanvasHitRegion,
+  GanttCanvasLayer,
+  GanttCanvasLineCommand,
+  GanttCanvasPointerEvent,
+  GanttCanvasPointerEventType,
+  GanttCanvasRectCommand,
+  GanttCanvasTextBaseline,
+  GanttCanvasTextCommand,
   GanttConfig,
   GanttExportedTask,
   GanttHostController,
@@ -46,6 +59,7 @@ import type {
   GanttRuntimeImportOptions,
   GanttRuntimeTaskInput,
   GanttRuntimeTaskPatch,
+  GanttSceneTransform,
   GanttTaskEditEvent,
   GanttTaskEditResolver,
   GanttTaskEditState,
@@ -84,6 +98,19 @@ type ActiveEditBatchState = {
   events: GanttTaskEditEvent[];
   originalTasks: GanttTask[];
   draftTasks: GanttTask[];
+};
+
+type CanvasLayerFrameState = {
+  solids: SolidInstanceWriter;
+  lines: LineInstanceWriter;
+  glyphs: GlyphInstanceWriter;
+  hitRegions: CanvasLayerHitRegionRecord[];
+};
+
+type CanvasLayerHitRegionRecord = GanttCanvasHitRegion & {
+  key: string;
+  layerIndex: number;
+  order: number;
 };
 
 const ZOOM_PRESETS: ZoomPreset[] = [
@@ -403,6 +430,74 @@ function resolveMsdfManifestUrl(font: NormalizedGanttConfig['font']): string | u
   return font.msdfManifestUrl;
 }
 
+function normalizeCanvasRect(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): { x: number; y: number; width: number; height: number } {
+  const left = Math.min(x, x + width);
+  const top = Math.min(y, y + height);
+  return {
+    x: left,
+    y: top,
+    width: Math.abs(width),
+    height: Math.abs(height),
+  };
+}
+
+function projectCanvasRectToWorld(
+  camera: CameraState,
+  command: Pick<GanttCanvasRectCommand, 'space' | 'x' | 'y' | 'width' | 'height'>,
+): { x: number; y: number; width: number; height: number } {
+  const rect = normalizeCanvasRect(command.x, command.y, command.width, command.height);
+  if (command.space === 'world') {
+    return rect;
+  }
+
+  return {
+    x: camera.scrollX + rect.x / camera.zoomX,
+    y: camera.scrollY + rect.y / camera.zoomY,
+    width: rect.width / camera.zoomX,
+    height: rect.height / camera.zoomY,
+  };
+}
+
+function projectCanvasPointToWorld(
+  camera: CameraState,
+  space: 'world' | 'screen',
+  x: number,
+  y: number,
+): [number, number] {
+  return space === 'world'
+    ? [x, y]
+    : [
+        camera.scrollX + x / camera.zoomX,
+        camera.scrollY + y / camera.zoomY,
+      ];
+}
+
+function resolveCanvasTextBaselineY(
+  atlas: FontAtlas,
+  fontPx: number,
+  y: number,
+  baseline: GanttCanvasTextBaseline | undefined,
+): number {
+  const scale = fontPx / atlas.lineHeight;
+  const textHeight = (atlas.ascender + atlas.descender) * scale;
+
+  switch (baseline ?? 'alphabetic') {
+    case 'top':
+      return y + atlas.ascender * scale;
+    case 'middle':
+      return y - textHeight * 0.5 + atlas.ascender * scale;
+    case 'bottom':
+      return y - atlas.descender * scale;
+    default:
+      return y;
+  }
+}
+
 function pickSelectedTask(
   scene: GanttScene,
   index: TaskIndex,
@@ -451,8 +546,9 @@ class GanttHostImpl implements GanttHostController {
   private scene: GanttScene = { tasks: [], rowLabels: [], timelineStart: 0, timelineEnd: 0 };
   private index: TaskIndex = buildTaskIndex([]);
   private dependentsById = new Map<string, GanttTask[]>();
-  private effectiveScene: GanttScene | null = null;
-  private effectiveIndex: TaskIndex | null = null;
+  private previewScene: GanttScene | null = null;
+  private transformedScene: GanttScene | null = null;
+  private transformedIndex: TaskIndex | null = null;
   private readonly config: NormalizedGanttConfig;
   private atlas: FontAtlas;
   private readonly layout: TextLayoutEngine;
@@ -482,6 +578,13 @@ class GanttHostImpl implements GanttHostController {
   private readonly cleanupCallbacks: Array<() => void> = [];
   private readonly taskStyleResolvers: TaskStyleResolver[] = [];
   private readonly taskEditResolvers: GanttTaskEditResolver[] = [];
+  private readonly sceneTransforms: GanttSceneTransform[] = [];
+  private readonly canvasLayers: GanttCanvasLayer[] = [];
+  private canvasHitRegions: CanvasLayerHitRegionRecord[] = [];
+  private readonly canvasHitRegionByKey = new Map<string, CanvasLayerHitRegionRecord>();
+  private readonly capturedCanvasRegionKeys = new Map<number, string>();
+  private readonly hoveredCanvasRegionKeys = new Map<number, string>();
+  private readonly pendingCanvasClickRegionKeys = new Map<number, string>();
   private readonly overlays: OverlayRenderer[] = [];
   private readonly uiCommands = new Map<string, UiCommand>();
   private readonly pluginRuntime: PluginRuntime;
@@ -520,6 +623,7 @@ class GanttHostImpl implements GanttHostController {
         ? 'view'
         : this.config.edit.defaultMode;
     this.canvas.dataset.mode = this.interactionMode;
+    this.attachCanvasLayerPointerEvents();
 
     this.pluginRuntime = new PluginRuntime({
       config: this.config,
@@ -531,9 +635,12 @@ class GanttHostImpl implements GanttHostController {
       safeApi: {
         registerTaskStyleResolver: (resolver) => this.registerTaskStyleResolver(resolver),
         registerOverlay: (overlay) => this.registerOverlay(overlay),
+        registerSceneTransform: (transform) => this.registerSceneTransform(transform),
+        registerCanvasLayer: (layer) => this.registerCanvasLayer(layer),
         registerUiCommand: (command) => this.registerUiCommand(command),
         registerModule: (module) => this.registerModule(module),
         registerTaskEditResolver: (resolver) => this.registerTaskEditResolver(resolver),
+        requestRender: () => this.requestRender(),
         getSceneSnapshot: () => this.scene,
         getTask: (taskId) => this.getTask(taskId),
         getTasks: () => this.getTasks(),
@@ -626,35 +733,367 @@ class GanttHostImpl implements GanttHostController {
     return dependentsById;
   }
 
-  private invalidateEffectiveScene(): void {
-    this.effectiveScene = null;
-    this.effectiveIndex = null;
+  private invalidateRenderCaches(): void {
+    this.previewScene = null;
+    this.transformedScene = null;
+    this.transformedIndex = null;
   }
 
-  private getRenderScene(): GanttScene {
+  private getPreviewScene(): GanttScene {
     if (!this.activeEdit) {
       return this.scene;
     }
 
-    if (!this.effectiveScene) {
+    if (!this.previewScene) {
       const draftTasks = this.activeEditBatch?.draftTasks ?? [this.activeEdit.draftTask];
-      this.effectiveScene = replaceTasksInScene(this.scene, draftTasks);
+      this.previewScene = replaceTasksInScene(this.scene, draftTasks);
     }
 
-    return this.effectiveScene;
+    return this.previewScene;
+  }
+
+  private getRenderScene(): GanttScene {
+    const previewScene = this.getPreviewScene();
+    if (this.sceneTransforms.length === 0) {
+      return previewScene;
+    }
+
+    if (!this.transformedScene) {
+      let current = previewScene;
+      for (const transform of this.sceneTransforms) {
+        const next = transform(current);
+        if (next) {
+          current = next;
+        }
+      }
+      this.transformedScene = current;
+    }
+
+    return this.transformedScene;
   }
 
   private getRenderIndex(): TaskIndex {
-    if (!this.activeEdit) {
+    if (!this.activeEdit && this.sceneTransforms.length === 0) {
       return this.index;
     }
 
-    if (!this.effectiveIndex) {
+    if (!this.transformedIndex) {
       const scene = this.getRenderScene();
-      this.effectiveIndex = buildTaskIndex(scene.tasks, scene.rowLabels.length);
+      this.transformedIndex = buildTaskIndex(scene.tasks, scene.rowLabels.length);
     }
 
-    return this.effectiveIndex;
+    return this.transformedIndex;
+  }
+
+  private attachCanvasLayerPointerEvents(): void {
+    const onPointerMove = (event: PointerEvent) => {
+      const point = this.getLocalCanvasPoint(event);
+      const consumed = this.dispatchCanvasPointer('pointermove', event, point.x, point.y);
+      this.syncCanvasCursor(point.x, point.y);
+      if (consumed) {
+        event.preventDefault?.();
+        event.stopImmediatePropagation?.();
+      }
+    };
+
+    const onPointerDown = (event: PointerEvent) => {
+      const point = this.getLocalCanvasPoint(event);
+      const consumed = this.dispatchCanvasPointer('pointerdown', event, point.x, point.y);
+      this.syncCanvasCursor(point.x, point.y);
+      if (consumed) {
+        event.preventDefault?.();
+        event.stopImmediatePropagation?.();
+      }
+    };
+
+    const onPointerUp = (event: PointerEvent) => {
+      const point = this.getLocalCanvasPoint(event);
+      const consumed = this.dispatchCanvasPointer('pointerup', event, point.x, point.y);
+      this.syncCanvasCursor(point.x, point.y);
+      if (consumed) {
+        event.preventDefault?.();
+        event.stopImmediatePropagation?.();
+      }
+    };
+
+    const onPointerCancel = (event: PointerEvent) => {
+      const point = this.getLocalCanvasPoint(event);
+      const pointerId = typeof event.pointerId === 'number' ? event.pointerId : 1;
+      this.clearHoveredCanvasRegion(pointerId, event, point.x, point.y);
+      const consumed = this.capturedCanvasRegionKeys.delete(pointerId);
+      this.pendingCanvasClickRegionKeys.delete(pointerId);
+      if (this.canvas.hasPointerCapture?.(pointerId)) {
+        this.canvas.releasePointerCapture?.(pointerId);
+      }
+      this.syncCanvasCursor(null, null);
+      if (consumed) {
+        event.preventDefault?.();
+        event.stopImmediatePropagation?.();
+      }
+    };
+
+    const onPointerLeave = (event: PointerEvent) => {
+      const point = this.getLocalCanvasPoint(event);
+      const consumed = this.dispatchCanvasPointer('pointerleave', event, point.x, point.y);
+      this.syncCanvasCursor(null, null);
+      if (consumed) {
+        event.preventDefault?.();
+        event.stopImmediatePropagation?.();
+      }
+    };
+
+    const onClick = (event: MouseEvent) => {
+      const point = this.getLocalCanvasPoint(event);
+      const consumed = this.dispatchCanvasPointer('click', event, point.x, point.y);
+      this.syncCanvasCursor(point.x, point.y);
+      if (consumed) {
+        event.preventDefault?.();
+        event.stopImmediatePropagation?.();
+      }
+    };
+
+    this.canvas.addEventListener('pointermove', onPointerMove, true);
+    this.canvas.addEventListener('pointerdown', onPointerDown, true);
+    this.canvas.addEventListener('pointerup', onPointerUp, true);
+    this.canvas.addEventListener('pointercancel', onPointerCancel, true);
+    this.canvas.addEventListener('pointerleave', onPointerLeave, true);
+    this.canvas.addEventListener('click', onClick, true);
+    this.registerCleanup(() => {
+      this.canvas.removeEventListener('pointermove', onPointerMove, true);
+      this.canvas.removeEventListener('pointerdown', onPointerDown, true);
+      this.canvas.removeEventListener('pointerup', onPointerUp, true);
+      this.canvas.removeEventListener('pointercancel', onPointerCancel, true);
+      this.canvas.removeEventListener('pointerleave', onPointerLeave, true);
+      this.canvas.removeEventListener('click', onClick, true);
+    });
+  }
+
+  private getLocalCanvasPoint(event: { clientX?: number; clientY?: number }): { x: number; y: number } {
+    const rect = this.canvas.getBoundingClientRect();
+    return {
+      x: (event.clientX ?? 0) - rect.left,
+      y: (event.clientY ?? 0) - rect.top,
+    };
+  }
+
+  private resolveCanvasHitRegionByKey(key: string | null): CanvasLayerHitRegionRecord | null {
+    if (!key) {
+      return null;
+    }
+    return this.canvasHitRegionByKey.get(key) ?? null;
+  }
+
+  private getCanvasHitRegionScreenRect(region: CanvasLayerHitRegionRecord): { x: number; y: number; width: number; height: number } {
+    if (region.space === 'screen') {
+      return normalizeCanvasRect(region.x, region.y, region.width, region.height);
+    }
+
+    const [screenX, screenY] = worldToScreen(this.camera, region.x, region.y);
+    return normalizeCanvasRect(
+      screenX,
+      screenY,
+      region.width * this.camera.zoomX,
+      region.height * this.camera.zoomY,
+    );
+  }
+
+  private resolveCanvasHitRegion(screenX: number, screenY: number): CanvasLayerHitRegionRecord | null {
+    for (let index = this.canvasHitRegions.length - 1; index >= 0; index -= 1) {
+      const region = this.canvasHitRegions[index];
+      const rect = this.getCanvasHitRegionScreenRect(region);
+      if (
+        screenX >= rect.x &&
+        screenX <= rect.x + rect.width &&
+        screenY >= rect.y &&
+        screenY <= rect.y + rect.height
+      ) {
+        return region;
+      }
+    }
+
+    return null;
+  }
+
+  private buildCanvasPointerEvent(
+    type: GanttCanvasPointerEventType,
+    rawEvent: PointerEvent | MouseEvent,
+    screenX: number,
+    screenY: number,
+    capture: () => void,
+  ): GanttCanvasPointerEvent {
+    const pointerId = 'pointerId' in rawEvent && typeof rawEvent.pointerId === 'number' ? rawEvent.pointerId : 1;
+    const [worldX, worldY] = screenToWorld(this.camera, screenX, screenY);
+    return {
+      type,
+      pointerId,
+      screenX,
+      screenY,
+      worldX,
+      worldY,
+      button: rawEvent.button ?? 0,
+      buttons: rawEvent.buttons ?? 0,
+      altKey: rawEvent.altKey ?? false,
+      ctrlKey: rawEvent.ctrlKey ?? false,
+      metaKey: rawEvent.metaKey ?? false,
+      shiftKey: rawEvent.shiftKey ?? false,
+      capture,
+      requestRender: () => this.requestRender(),
+    };
+  }
+
+  private dispatchCanvasPointerEventToRegion(
+    region: CanvasLayerHitRegionRecord | null,
+    type: GanttCanvasPointerEventType,
+    rawEvent: PointerEvent | MouseEvent,
+    screenX: number,
+    screenY: number,
+  ): boolean {
+    if (!region) {
+      return false;
+    }
+
+    const handler = type === 'pointerenter'
+      ? region.onPointerEnter
+      : type === 'pointerleave'
+        ? region.onPointerLeave
+        : type === 'pointermove'
+          ? region.onPointerMove
+          : type === 'pointerdown'
+            ? region.onPointerDown
+            : type === 'pointerup'
+              ? region.onPointerUp
+              : region.onClick;
+
+    if (!handler) {
+      return false;
+    }
+
+    let captured = false;
+    const event = this.buildCanvasPointerEvent(type, rawEvent, screenX, screenY, () => {
+      captured = true;
+    });
+
+    try {
+      const result = handler(event);
+      Promise.resolve(result).catch((error) => {
+        console.error(`Canvas hit region ${type} handler failed`, error);
+      });
+    } catch (error) {
+      console.error(`Canvas hit region ${type} handler failed`, error);
+    }
+
+    return captured;
+  }
+
+  private clearHoveredCanvasRegion(
+    pointerId: number,
+    rawEvent: PointerEvent | MouseEvent,
+    screenX: number,
+    screenY: number,
+  ): void {
+    const hoveredKey = this.hoveredCanvasRegionKeys.get(pointerId) ?? null;
+    const hoveredRegion = this.resolveCanvasHitRegionByKey(hoveredKey);
+    if (hoveredRegion) {
+      this.dispatchCanvasPointerEventToRegion(hoveredRegion, 'pointerleave', rawEvent, screenX, screenY);
+    }
+    this.hoveredCanvasRegionKeys.delete(pointerId);
+  }
+
+  private syncCanvasCursor(screenX: number | null, screenY: number | null): void {
+    const capturedRegion = Array.from(this.capturedCanvasRegionKeys.values())
+      .map((key) => this.resolveCanvasHitRegionByKey(key))
+      .find((region) => region !== null) ?? null;
+    const hoveredRegion =
+      capturedRegion ??
+      (screenX !== null && screenY !== null ? this.resolveCanvasHitRegion(screenX, screenY) : null);
+    this.canvas.style.cursor = hoveredRegion?.cursor ?? '';
+  }
+
+  private dispatchCanvasPointer(
+    type: GanttCanvasPointerEventType,
+    rawEvent: PointerEvent | MouseEvent,
+    screenX: number,
+    screenY: number,
+  ): boolean {
+    const pointerId = 'pointerId' in rawEvent && typeof rawEvent.pointerId === 'number' ? rawEvent.pointerId : 1;
+    const capturedKey = this.capturedCanvasRegionKeys.get(pointerId) ?? null;
+    const pendingClickKey = this.pendingCanvasClickRegionKeys.get(pointerId) ?? null;
+    let targetRegion = this.resolveCanvasHitRegionByKey(capturedKey);
+    if (capturedKey && !targetRegion) {
+      this.capturedCanvasRegionKeys.delete(pointerId);
+    }
+
+    if (type === 'pointerleave') {
+      this.clearHoveredCanvasRegion(pointerId, rawEvent, screenX, screenY);
+      return Boolean(this.capturedCanvasRegionKeys.get(pointerId));
+    }
+
+    if (!targetRegion && type === 'click') {
+      targetRegion = this.resolveCanvasHitRegionByKey(pendingClickKey);
+      this.pendingCanvasClickRegionKeys.delete(pointerId);
+    }
+
+    if (!targetRegion) {
+      targetRegion = this.resolveCanvasHitRegion(screenX, screenY);
+    }
+
+    if (type === 'pointermove') {
+      const hoveredKey = this.hoveredCanvasRegionKeys.get(pointerId) ?? null;
+      const nextHoveredKey = targetRegion?.key ?? null;
+      let enteredCaptured = false;
+
+      if (hoveredKey !== nextHoveredKey) {
+        const previousRegion = this.resolveCanvasHitRegionByKey(hoveredKey);
+        if (previousRegion) {
+          this.dispatchCanvasPointerEventToRegion(previousRegion, 'pointerleave', rawEvent, screenX, screenY);
+        }
+        if (targetRegion) {
+          enteredCaptured = this.dispatchCanvasPointerEventToRegion(
+            targetRegion,
+            'pointerenter',
+            rawEvent,
+            screenX,
+            screenY,
+          );
+          this.hoveredCanvasRegionKeys.set(pointerId, targetRegion.key);
+        } else {
+          this.hoveredCanvasRegionKeys.delete(pointerId);
+        }
+      }
+
+      const captured = this.dispatchCanvasPointerEventToRegion(targetRegion, 'pointermove', rawEvent, screenX, screenY);
+      return Boolean(this.capturedCanvasRegionKeys.get(pointerId)) || enteredCaptured || captured;
+    }
+
+    if (type === 'pointerdown') {
+      this.pendingCanvasClickRegionKeys.delete(pointerId);
+      const captured = this.dispatchCanvasPointerEventToRegion(targetRegion, 'pointerdown', rawEvent, screenX, screenY);
+      if (captured && targetRegion) {
+        this.capturedCanvasRegionKeys.set(pointerId, targetRegion.key);
+        (this.canvas as unknown as { setPointerCapture?: (id: number) => void }).setPointerCapture?.(pointerId);
+      }
+      return captured;
+    }
+
+    if (type === 'pointerup') {
+      const captured = this.dispatchCanvasPointerEventToRegion(targetRegion, 'pointerup', rawEvent, screenX, screenY);
+      const shouldSuppress = Boolean(capturedKey) || captured;
+      if (shouldSuppress && targetRegion) {
+        this.pendingCanvasClickRegionKeys.set(pointerId, targetRegion.key);
+      }
+      this.capturedCanvasRegionKeys.delete(pointerId);
+      const canvas = this.canvas as unknown as {
+        hasPointerCapture?: (id: number) => boolean;
+        releasePointerCapture?: (id: number) => void;
+      };
+      if (canvas.hasPointerCapture?.(pointerId)) {
+        canvas.releasePointerCapture?.(pointerId);
+      }
+      return shouldSuppress;
+    }
+
+    const captured = this.dispatchCanvasPointerEventToRegion(targetRegion, 'click', rawEvent, screenX, screenY);
+    return Boolean(pendingClickKey) || captured;
   }
 
   private hasTask(taskId: string | null, index: TaskIndex): boolean {
@@ -750,7 +1189,7 @@ class GanttHostImpl implements GanttHostController {
     this.index = buildTaskIndex(scene.tasks, scene.rowLabels.length);
     this.dependentsById = this.buildDependentsMap(scene.tasks);
     this.frame = null;
-    this.invalidateEffectiveScene();
+    this.invalidateRenderCaches();
     this.refreshSelectionReferences();
   }
 
@@ -791,7 +1230,7 @@ class GanttHostImpl implements GanttHostController {
     this.activeEdit = edit;
     this.activeEditBatch = batch;
     this.lastTaskEditEvent = event;
-    this.invalidateEffectiveScene();
+    this.invalidateRenderCaches();
     this.refreshSelectionReferences();
     this.requestRender();
   }
@@ -878,6 +1317,157 @@ class GanttHostImpl implements GanttHostController {
       : this.selectedTaskId;
   }
 
+  private buildCanvasLayerFrames(scene: GanttScene, frame: FrameScene): CanvasLayerFrameState[] {
+    const selection = this.getSelection();
+    const interaction = this.getInteractionState();
+    const visibleWindow = this.getVisibleWindow();
+    const atlas = this.layout.getAtlas();
+    const frames: CanvasLayerFrameState[] = [];
+
+    this.canvasHitRegions = [];
+    this.canvasHitRegionByKey.clear();
+
+    for (let layerIndex = 0; layerIndex < this.canvasLayers.length; layerIndex += 1) {
+      const layer = this.canvasLayers[layerIndex];
+      const layerFrame: CanvasLayerFrameState = {
+        solids: new SolidInstanceWriter(64),
+        lines: new LineInstanceWriter(64),
+        glyphs: new GlyphInstanceWriter(128),
+        hitRegions: [],
+      };
+
+      const draw: GanttCanvasDrawApi = {
+        rect: (command: GanttCanvasRectCommand) => {
+          const rect = projectCanvasRectToWorld(this.camera, command);
+          if (rect.width <= 0 || rect.height <= 0) {
+            return;
+          }
+
+          layerFrame.solids.appendRect(
+            rect.x,
+            rect.y,
+            rect.width,
+            rect.height,
+            command.color[0],
+            command.color[1],
+            command.color[2],
+            command.color[3],
+            0,
+            command.emphasis ?? 0,
+            command.radiusPx ?? 0,
+          );
+        },
+        line: (command: GanttCanvasLineCommand) => {
+          const [x1, y1] = projectCanvasPointToWorld(this.camera, command.space, command.x1, command.y1);
+          const [x2, y2] = projectCanvasPointToWorld(this.camera, command.space, command.x2, command.y2);
+          layerFrame.lines.appendLine(
+            x1,
+            y1,
+            x2,
+            y2,
+            command.color[0],
+            command.color[1],
+            command.color[2],
+            command.color[3],
+            command.thickness ?? 1.5,
+          );
+        },
+        text: (command: GanttCanvasTextCommand) => {
+          const fontPx = Math.max(1, command.fontPx);
+          const [screenX, screenY] = command.space === 'world'
+            ? worldToScreen(this.camera, command.x, command.y)
+            : [command.x, command.y];
+          const maxWidth = command.maxWidth ?? Number.POSITIVE_INFINITY;
+          const visibleText = Number.isFinite(maxWidth)
+            ? this.layout.fit(command.text, maxWidth, fontPx)
+            : command.text;
+          if (visibleText.length === 0) {
+            return;
+          }
+
+          const textWidth = this.layout.measure(visibleText, fontPx);
+          const startX =
+            command.align === 'center'
+              ? screenX - textWidth * 0.5
+              : command.align === 'right'
+                ? screenX - textWidth
+                : screenX;
+          const baselineY = resolveCanvasTextBaselineY(atlas, fontPx, screenY, command.baseline);
+
+          if (command.shadowColor) {
+            const shadowOffset = Math.max(0.5, fontPx * 0.05);
+            this.layout.appendText(
+              layerFrame.glyphs,
+              visibleText,
+              startX + shadowOffset,
+              baselineY + shadowOffset,
+              fontPx,
+              command.shadowColor,
+            );
+          }
+
+          this.layout.appendText(
+            layerFrame.glyphs,
+            visibleText,
+            startX,
+            baselineY,
+            fontPx,
+            command.color,
+          );
+        },
+        hitRegion: (region: GanttCanvasHitRegion) => {
+          const key = `${layerIndex}:${region.id ?? layerFrame.hitRegions.length}`;
+          layerFrame.hitRegions.push({
+            ...region,
+            key,
+            layerIndex,
+            order: layerFrame.hitRegions.length,
+          });
+        },
+      };
+
+      try {
+        layer({
+          scene,
+          frame,
+          camera: this.camera,
+          render: this.config.render,
+          visibleWindow,
+          selection,
+          interaction,
+          draw,
+        });
+      } catch (error) {
+        console.error('Canvas layer failed', error);
+      }
+
+      frames.push(layerFrame);
+
+      for (const region of layerFrame.hitRegions) {
+        this.canvasHitRegions.push(region);
+        this.canvasHitRegionByKey.set(region.key, region);
+      }
+    }
+
+    for (const [pointerId, key] of [...this.capturedCanvasRegionKeys.entries()]) {
+      if (!this.canvasHitRegionByKey.has(key)) {
+        this.capturedCanvasRegionKeys.delete(pointerId);
+      }
+    }
+    for (const [pointerId, key] of [...this.hoveredCanvasRegionKeys.entries()]) {
+      if (!this.canvasHitRegionByKey.has(key)) {
+        this.hoveredCanvasRegionKeys.delete(pointerId);
+      }
+    }
+    for (const [pointerId, key] of [...this.pendingCanvasClickRegionKeys.entries()]) {
+      if (!this.canvasHitRegionByKey.has(key)) {
+        this.pendingCanvasClickRegionKeys.delete(pointerId);
+      }
+    }
+
+    return frames;
+  }
+
   private async flushDrawQueue(): Promise<void> {
     if (this.drawing || this.disposed) {
       return;
@@ -936,7 +1526,11 @@ class GanttHostImpl implements GanttHostController {
 
     frame = await this.pluginRuntime.applyFrameHooks(frame);
 
+    const canvasLayerFrames = this.buildCanvasLayerFrames(scene, frame);
     this.renderer.render(frame, this.camera, this.atlas, this.config.display);
+    for (const layerFrame of canvasLayerFrames) {
+      this.renderer.renderLayer(layerFrame, this.camera, this.atlas);
+    }
     this.frame = frame;
     this.lastFrameMs = performance.now() - start;
     this.refreshSelectionReferences();
@@ -1003,6 +1597,32 @@ class GanttHostImpl implements GanttHostController {
       const index = this.taskEditResolvers.indexOf(resolver);
       if (index >= 0) {
         this.taskEditResolvers.splice(index, 1);
+      }
+    };
+  }
+
+  private registerSceneTransform(transform: GanttSceneTransform): () => void {
+    this.sceneTransforms.push(transform);
+    this.invalidateRenderCaches();
+    this.requestRender();
+    return () => {
+      const index = this.sceneTransforms.indexOf(transform);
+      if (index >= 0) {
+        this.sceneTransforms.splice(index, 1);
+        this.invalidateRenderCaches();
+        this.requestRender();
+      }
+    };
+  }
+
+  private registerCanvasLayer(layer: GanttCanvasLayer): () => void {
+    this.canvasLayers.push(layer);
+    this.requestRender();
+    return () => {
+      const index = this.canvasLayers.indexOf(layer);
+      if (index >= 0) {
+        this.canvasLayers.splice(index, 1);
+        this.requestRender();
       }
     };
   }
@@ -1100,6 +1720,7 @@ class GanttHostImpl implements GanttHostController {
       return;
     }
 
+    this.invalidateRenderCaches();
     this.renderRequested = true;
     requestAnimationFrame(() => {
       void this.flushDrawQueue();
@@ -1398,7 +2019,7 @@ class GanttHostImpl implements GanttHostController {
       draftTasks: resolvedEvents.map((candidate) => this.cloneTask(candidate.proposedTask)),
     };
     this.lastTaskEditEvent = primaryEvent;
-    this.invalidateEffectiveScene();
+    this.invalidateRenderCaches();
     this.requestRender();
     for (const resolvedEvent of resolvedEvents) {
       this.pluginRuntime.notifyTaskEditCommit(resolvedEvent);

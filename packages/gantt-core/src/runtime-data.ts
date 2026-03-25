@@ -1,4 +1,5 @@
 import { DAY_MS, type GanttScene, type GanttTask } from './core';
+import { cloneScene, cloneTask, extractTaskExtras, mergeTaskExtras, withTaskExtras } from './task-data';
 import type {
   GanttExportedTask,
   GanttRuntimeDateInput,
@@ -158,15 +159,18 @@ function buildTaskFromRuntimeInput(
   const candidate = assertObject(input, label);
   const start = parseRuntimeDateInput(candidate.start as GanttRuntimeDateInput, options, `${label}.start`);
   const inclusiveEnd = parseRuntimeDateInput(candidate.end as GanttRuntimeDateInput, options, `${label}.end`);
-  const task: GanttTask = {
-    id: normalizeTaskId(candidate.id, `${label}.id`),
-    rowIndex: normalizeRowIndex(candidate.rowIndex, `${label}.rowIndex`),
-    start,
-    end: inclusiveEnd + 1,
-    label: normalizeLabel(candidate.label, `${label}.label`),
-    milestone: normalizeMilestone(candidate.milestone, `${label}.milestone`),
-    dependencies: normalizeDependencies(candidate.dependencies, `${label}.dependencies`),
-  };
+  const task = withTaskExtras(
+    {
+      id: normalizeTaskId(candidate.id, `${label}.id`),
+      rowIndex: normalizeRowIndex(candidate.rowIndex, `${label}.rowIndex`),
+      start,
+      end: inclusiveEnd + 1,
+      label: normalizeLabel(candidate.label, `${label}.label`),
+      milestone: normalizeMilestone(candidate.milestone, `${label}.milestone`),
+      dependencies: normalizeDependencies(candidate.dependencies, `${label}.dependencies`),
+    },
+    extractTaskExtras(candidate),
+  );
 
   if (task.end <= task.start) {
     throw new Error(`${label} must have an end date on or after its start date.`);
@@ -209,15 +213,18 @@ function buildTaskFromRuntimePatch(
     throw new Error(`Task patch for '${taskId}' must leave the task with an end date on or after its start date.`);
   }
 
-  return {
-    id: baseTask.id,
-    rowIndex,
-    start,
-    end,
-    label,
-    milestone,
-    dependencies,
-  };
+  return withTaskExtras(
+    {
+      id: baseTask.id,
+      rowIndex,
+      start,
+      end,
+      label,
+      milestone,
+      dependencies,
+    },
+    mergeTaskExtras(baseTask, candidate),
+  );
 }
 
 function normalizeTimelineBounds(tasks: GanttTask[]): { timelineStart: number; timelineEnd: number } {
@@ -238,21 +245,7 @@ function cloneDependencies(dependencies: string[] | undefined): string[] | undef
   return dependencies ? dependencies.slice() : undefined;
 }
 
-export function cloneTask(task: GanttTask): GanttTask {
-  return {
-    ...task,
-    dependencies: cloneDependencies(task.dependencies),
-  };
-}
-
-export function cloneScene(scene: GanttScene): GanttScene {
-  return {
-    tasks: scene.tasks.map((task) => cloneTask(task)),
-    rowLabels: scene.rowLabels.slice(),
-    timelineStart: scene.timelineStart,
-    timelineEnd: scene.timelineEnd,
-  };
-}
+export { cloneTask, cloneScene };
 
 function buildRuntimeScene(scene: GanttScene, tasks: GanttTask[]): GanttScene {
   const nextTasks = tasks.map((task) => cloneTask(task));
@@ -288,6 +281,7 @@ export function getTasks(scene: GanttScene): GanttTask[] {
 
 export function exportTask(task: GanttTask): GanttExportedTask {
   return {
+    ...extractTaskExtras(task as Record<string, unknown>),
     id: task.id,
     rowIndex: task.rowIndex,
     label: task.label,

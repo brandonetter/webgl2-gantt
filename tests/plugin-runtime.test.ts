@@ -25,9 +25,12 @@ function makeHostApi(configInput = {}) {
   const safeApi: GanttSafeApi = {
     registerTaskStyleResolver: () => () => undefined,
     registerOverlay: () => () => undefined,
+    registerSceneTransform: () => () => undefined,
+    registerCanvasLayer: () => () => undefined,
     registerUiCommand: () => () => undefined,
     registerModule: () => () => undefined,
     registerTaskEditResolver: () => () => undefined,
+    requestRender: () => undefined,
     getSceneSnapshot: () => ({ tasks: [], rowLabels: [], timelineStart: 0, timelineEnd: 0 }),
     getTask: () => null,
     getTasks: () => [] as GanttTask[],
@@ -174,6 +177,9 @@ describe('plugin runtime', () => {
   it('supports safe and advanced plugin paths with explicit opt-in', async () => {
     const registerStyle = vi.fn(() => () => undefined);
     const registerOverlay = vi.fn(() => () => undefined);
+    const registerSceneTransform = vi.fn(() => () => undefined);
+    const registerCanvasLayer = vi.fn(() => () => undefined);
+    const safeRender = vi.fn();
     const advancedRender = vi.fn();
     const safePlugin: GanttPlugin = {
       meta: {
@@ -185,6 +191,9 @@ describe('plugin runtime', () => {
         onInit: () => {
           context.safe.registerTaskStyleResolver(() => ({ fill: [1, 0, 0, 1] }));
           context.safe.registerOverlay(() => undefined);
+          context.safe.registerSceneTransform((scene) => scene);
+          context.safe.registerCanvasLayer(() => undefined);
+          context.safe.requestRender();
         },
       }),
     };
@@ -227,6 +236,9 @@ describe('plugin runtime', () => {
 
     api.safeApi.registerTaskStyleResolver = registerStyle;
     api.safeApi.registerOverlay = registerOverlay;
+    api.safeApi.registerSceneTransform = registerSceneTransform;
+    api.safeApi.registerCanvasLayer = registerCanvasLayer;
+    api.safeApi.requestRender = safeRender;
     api.advancedApi.requestRender = advancedRender;
 
     const runtime = new PluginRuntime(api);
@@ -235,6 +247,9 @@ describe('plugin runtime', () => {
 
     expect(registerStyle).toHaveBeenCalledTimes(1);
     expect(registerOverlay).toHaveBeenCalledTimes(1);
+    expect(registerSceneTransform).toHaveBeenCalledTimes(1);
+    expect(registerCanvasLayer).toHaveBeenCalledTimes(1);
+    expect(safeRender).toHaveBeenCalledTimes(1);
     expect(advancedRender).toHaveBeenCalledTimes(1);
   });
 

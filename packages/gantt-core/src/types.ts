@@ -2,6 +2,7 @@ import type {
   CameraState,
   ViewWindow,
   FrameOptions,
+  GanttColor,
   GanttDisplayConfig,
   FrameScene,
   GanttScene,
@@ -12,7 +13,7 @@ import type {
 } from './core';
 import type { SampleOptions } from './data';
 
-export const GANTT_PLUGIN_API_VERSION = '1.3.0';
+export const GANTT_PLUGIN_API_VERSION = '1.4.0';
 
 export type TaskStyleOverride = {
   fill?: [number, number, number, number];
@@ -135,7 +136,110 @@ export type GanttExportedTask = {
   startDate: string;
   endDate: string;
   durationDays: number;
+} & Record<string, unknown>;
+
+export type GanttSceneTransform = (scene: GanttScene) => void | GanttScene;
+
+export type GanttCanvasSpace = 'world' | 'screen';
+
+export type GanttCanvasTextAlign = 'left' | 'center' | 'right';
+
+export type GanttCanvasTextBaseline = 'top' | 'middle' | 'bottom' | 'alphabetic';
+
+export type GanttCanvasRectCommand = {
+  space: GanttCanvasSpace;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  color: GanttColor;
+  radiusPx?: number;
+  emphasis?: number;
 };
+
+export type GanttCanvasLineCommand = {
+  space: GanttCanvasSpace;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  color: GanttColor;
+  thickness?: number;
+};
+
+export type GanttCanvasTextCommand = {
+  space: GanttCanvasSpace;
+  x: number;
+  y: number;
+  text: string;
+  fontPx: number;
+  color: GanttColor;
+  maxWidth?: number;
+  align?: GanttCanvasTextAlign;
+  baseline?: GanttCanvasTextBaseline;
+  shadowColor?: GanttColor | null;
+};
+
+export type GanttCanvasPointerEventType =
+  | 'pointermove'
+  | 'pointerdown'
+  | 'pointerup'
+  | 'pointerenter'
+  | 'pointerleave'
+  | 'click';
+
+export type GanttCanvasPointerEvent = {
+  type: GanttCanvasPointerEventType;
+  pointerId: number;
+  screenX: number;
+  screenY: number;
+  worldX: number;
+  worldY: number;
+  button: number;
+  buttons: number;
+  altKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+  capture: () => void;
+  requestRender: () => void;
+};
+
+export type GanttCanvasHitRegion = {
+  id?: string;
+  space: GanttCanvasSpace;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  cursor?: string;
+  onPointerEnter?: (event: GanttCanvasPointerEvent) => void;
+  onPointerLeave?: (event: GanttCanvasPointerEvent) => void;
+  onPointerMove?: (event: GanttCanvasPointerEvent) => void;
+  onPointerDown?: (event: GanttCanvasPointerEvent) => void;
+  onPointerUp?: (event: GanttCanvasPointerEvent) => void;
+  onClick?: (event: GanttCanvasPointerEvent) => void;
+};
+
+export type GanttCanvasDrawApi = {
+  rect: (command: GanttCanvasRectCommand) => void;
+  line: (command: GanttCanvasLineCommand) => void;
+  text: (command: GanttCanvasTextCommand) => void;
+  hitRegion: (region: GanttCanvasHitRegion) => void;
+};
+
+export type GanttCanvasLayerContext = {
+  scene: Readonly<GanttScene>;
+  frame: Readonly<FrameScene>;
+  camera: Readonly<CameraState>;
+  render: Readonly<FrameOptions>;
+  visibleWindow: Readonly<ViewWindow>;
+  selection: Readonly<PluginSelectionState>;
+  interaction: Readonly<GanttInteractionState>;
+  draw: GanttCanvasDrawApi;
+};
+
+export type GanttCanvasLayer = (context: GanttCanvasLayerContext) => void;
 
 export type GanttPluginInstance = {
   onInit?: () => void | Promise<void>;
@@ -162,9 +266,12 @@ export type GanttAdvancedApi = {
 export type GanttSafeApi = {
   registerTaskStyleResolver: (resolver: TaskStyleResolver) => () => void;
   registerOverlay: (overlay: OverlayRenderer) => () => void;
+  registerSceneTransform: (transform: GanttSceneTransform) => () => void;
+  registerCanvasLayer: (layer: GanttCanvasLayer) => () => void;
   registerUiCommand: (command: UiCommand) => () => void;
   registerModule: (module: GanttModule) => () => void;
   registerTaskEditResolver: (resolver: GanttTaskEditResolver) => () => void;
+  requestRender: () => void;
   getSceneSnapshot: () => Readonly<GanttScene>;
   getTask: (taskId: string) => GanttTask | null;
   getTasks: () => GanttTask[];

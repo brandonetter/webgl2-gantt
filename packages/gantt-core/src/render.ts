@@ -306,6 +306,12 @@ function setInstancedAttribute(
   gl.vertexAttribDivisor(location, 1);
 }
 
+type RenderLayer = {
+  solids: { count: number; view: () => Float32Array };
+  lines: { count: number; view: () => Float32Array };
+  glyphs: { count: number; view: () => Float32Array };
+};
+
 export class GanttRenderer {
   private readonly solidProgram: WebGLProgram;
   private readonly lineProgram: WebGLProgram;
@@ -516,6 +522,67 @@ export class GanttRenderer {
       gl.bindBuffer(gl.ARRAY_BUFFER, this.textBuffer);
       gl.bufferData(gl.ARRAY_BUFFER, frame.glyphs.view(), gl.DYNAMIC_DRAW);
       gl.drawElementsInstanced(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0, frame.glyphs.count);
+    }
+
+    gl.bindVertexArray(null);
+    gl.useProgram(null);
+  }
+
+  renderLayer(
+    layer: RenderLayer,
+    camera: CameraState,
+    atlas: FontAtlas,
+  ): void {
+    const gl = this.gl;
+    this.uploadAtlas(atlas);
+
+    if (layer.solids.count > 0) {
+      gl.useProgram(this.solidProgram);
+      this.setCommonUniforms(this.solidProgram, camera);
+      gl.bindVertexArray(this.solidVao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.solidBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, layer.solids.view(), gl.DYNAMIC_DRAW);
+      gl.drawElementsInstanced(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0, layer.solids.count);
+    }
+
+    if (layer.lines.count > 0) {
+      gl.useProgram(this.lineProgram);
+      this.setCommonUniforms(this.lineProgram, camera);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.bindVertexArray(this.lineVao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.lineBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, layer.lines.view(), gl.DYNAMIC_DRAW);
+      gl.drawElementsInstanced(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0, layer.lines.count);
+    }
+
+    if (layer.glyphs.count > 0) {
+      gl.useProgram(this.textProgram);
+      this.setCommonUniforms(this.textProgram, camera);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.atlasTexture);
+
+      const atlasUniform = gl.getUniformLocation(this.textProgram, 'uAtlas');
+      const modeUniform = gl.getUniformLocation(this.textProgram, 'uMode');
+      const rangeUniform = gl.getUniformLocation(this.textProgram, 'uPxRange');
+      const sizeUniform = gl.getUniformLocation(this.textProgram, 'uAtlasSize');
+
+      if (atlasUniform) {
+        gl.uniform1i(atlasUniform, 0);
+      }
+      if (modeUniform) {
+        gl.uniform1i(modeUniform, atlas.mode === 'msdf' ? 1 : 0);
+      }
+      if (rangeUniform) {
+        gl.uniform1f(rangeUniform, atlas.pxRange);
+      }
+      if (sizeUniform) {
+        gl.uniform2f(sizeUniform, atlas.width, atlas.height);
+      }
+
+      gl.bindVertexArray(this.textVao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.textBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, layer.glyphs.view(), gl.DYNAMIC_DRAW);
+      gl.drawElementsInstanced(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0, layer.glyphs.count);
     }
 
     gl.bindVertexArray(null);
