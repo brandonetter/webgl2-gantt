@@ -667,6 +667,49 @@ describe('frame assembly', () => {
     expect(path?.segments.at(-1)?.x2).toBeGreaterThan(path?.segments.at(-1)?.x1 ?? 0);
   });
 
+  it('emits filled dependency arrowhead triangles when arrowheads are enabled', () => {
+    const atlas = makeTestAtlas();
+    const layout = new TextLayoutEngine(atlas);
+    const scene = {
+      rowLabels: ['Row 1', 'Row 2'],
+      timelineStart: 0,
+      timelineEnd: 80,
+      tasks: [
+        { id: 'a', rowIndex: 0, start: 0, end: 40, label: 'Source' },
+        { id: 'b', rowIndex: 1, start: 10, end: 30, label: 'Target', dependencies: ['a'] },
+      ],
+    };
+    const index = buildTaskIndex(scene.tasks);
+    const frame = buildFrame(
+      scene,
+      index,
+      { ...createCamera(800, 240), zoomX: 2, zoomY: 1, scrollX: 0, scrollY: 0 },
+      atlas,
+      layout,
+      {
+        selectedTaskId: null,
+        hoveredTaskId: null,
+        selectedDependencyId: null,
+        hoveredDependencyId: null,
+      },
+      {
+        rowPitch: 30,
+        barHeight: 16,
+        milestoneSize: 12,
+        rowPadding: 7,
+        labelPadding: 8,
+        gridPadding: 0,
+        overscanRows: 1,
+        overscanPx: 80,
+        renderSelectedDependencies: true,
+      },
+    );
+
+    expect(frame.dependencyTriangles.count).toBe(1);
+    expect(frame.dependencyPaths[0]?.segments.length).toBeGreaterThanOrEqual(1);
+    expect(frame.dependencyPaths[0]?.segments.at(-1)?.x2).toBeLessThan(30);
+  });
+
   it('keeps the directly-below routing topology stable across zoom levels', () => {
     const atlas = makeTestAtlas();
     const layout = new TextLayoutEngine(atlas);

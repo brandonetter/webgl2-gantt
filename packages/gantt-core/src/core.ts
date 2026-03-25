@@ -62,6 +62,7 @@ export type FrameScene = {
   foregroundSolids: SolidInstanceWriter;
   backgroundLines: LineInstanceWriter;
   dependencyLines: LineInstanceWriter;
+  dependencyTriangles: TriangleInstanceWriter;
   glyphs: GlyphInstanceWriter;
   dependencyPaths: DependencyPath[];
   stats: FrameStats;
@@ -111,6 +112,12 @@ export type DependencySegment = {
 type Point = {
   x: number;
   y: number;
+};
+
+type DependencyArrowhead = {
+  tip: Point;
+  left: Point;
+  right: Point;
 };
 
 type AttachmentSide = 'left' | 'right';
@@ -456,6 +463,39 @@ export class LineInstanceWriter extends FloatInstanceBuffer {
     this.data[offset + 6] = b;
     this.data[offset + 7] = a;
     this.data[offset + 8] = thickness;
+    this.count += 1;
+  }
+}
+
+export class TriangleInstanceWriter extends FloatInstanceBuffer {
+  constructor(initialCapacity = 256) {
+    super(10, initialCapacity);
+  }
+
+  appendTriangle(
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    x3: number,
+    y3: number,
+    r: number,
+    g: number,
+    b: number,
+    a: number,
+  ): void {
+    this.ensure();
+    const offset = this.count * this.stride;
+    this.data[offset + 0] = x1;
+    this.data[offset + 1] = y1;
+    this.data[offset + 2] = x2;
+    this.data[offset + 3] = y2;
+    this.data[offset + 4] = x3;
+    this.data[offset + 5] = y3;
+    this.data[offset + 6] = r;
+    this.data[offset + 7] = g;
+    this.data[offset + 8] = b;
+    this.data[offset + 9] = a;
     this.count += 1;
   }
 }
@@ -1788,7 +1828,7 @@ function buildDependencySegments(
   camera: CameraState,
   config: FrameOptions,
   display: NormalizedGanttDisplayConfig['dependencies'],
-): DependencySegment[] {
+): { segments: DependencySegment[]; arrowhead: DependencyArrowhead | null } {
   const sourceRect = getDependencyTaskRect(sourceTask, config, camera);
   const targetRect = getDependencyTaskRect(targetTask, config, camera);
   const cornerRadius = Math.max(0, display.cornerRadiusPx / camera.zoomX);
@@ -1950,7 +1990,7 @@ function buildDependencySegments(
 
   const segments = buildRoundedSegments(points, cornerRadius);
   if (segments.length === 0) {
-    return [];
+    return { segments: [], arrowhead: null };
   }
 
   const targetScreen = worldToScreen(camera, targetAnchor.x, targetAnchor.y);
@@ -1968,32 +2008,40 @@ function buildDependencySegments(
   const perpY = unitX;
   const arrowLength = display.arrowLengthPx;
   const arrowWidth = display.arrowWidthPx;
+  const baseScreen: [number, number] = [
+    targetScreen[0] - unitX * arrowLength,
+    targetScreen[1] - unitY * arrowLength,
+  ];
   const leftScreen: [number, number] = [
-    targetScreen[0] - unitX * arrowLength + perpX * arrowWidth,
-    targetScreen[1] - unitY * arrowLength + perpY * arrowWidth,
+    baseScreen[0] + perpX * arrowWidth,
+    baseScreen[1] + perpY * arrowWidth,
   ];
   const rightScreen: [number, number] = [
-    targetScreen[0] - unitX * arrowLength - perpX * arrowWidth,
-    targetScreen[1] - unitY * arrowLength - perpY * arrowWidth,
+    baseScreen[0] - perpX * arrowWidth,
+    baseScreen[1] - perpY * arrowWidth,
   ];
+  const baseWorld = screenToWorld(camera, baseScreen[0], baseScreen[1]);
   const leftWorld = screenToWorld(camera, leftScreen[0], leftScreen[1]);
   const rightWorld = screenToWorld(camera, rightScreen[0], rightScreen[1]);
 
   if (display.showArrowheads) {
-    segments.push({
-      x1: leftWorld[0],
-      y1: leftWorld[1],
-      x2: targetAnchor.x,
-      y2: targetAnchor.y,
-    });
-    segments.push({
-      x1: rightWorld[0],
-      y1: rightWorld[1],
-      x2: targetAnchor.x,
-      y2: targetAnchor.y,
-    });
+    const lastSegment = segments[segments.length - 1];
+    if (lastSegment) {
+      lastSegment.x2 = baseWorld[0];
+      lastSegment.y2 = baseWorld[1];
+    }
   }
-  return segments;
+
+  return {
+    segments,
+    arrowhead: display.showArrowheads
+      ? {
+          tip: targetAnchor,
+          left: { x: leftWorld[0], y: leftWorld[1] },
+          right: { x: rightWorld[0], y: rightWorld[1] },
+        }
+      : null,
+  };
 }
 
 function distanceToSegmentSquared(
@@ -2092,6 +2140,9 @@ export function buildFrame(
   );
   const dependencyLines = new LineInstanceWriter(
     Math.max(1024, index.rowCount * 8),
+  );
+  const dependencyTriangles = new TriangleInstanceWriter(
+    Math.max(256, index.rowCount * 2),
   );
   const glyphs = new GlyphInstanceWriter(Math.max(2048, index.rowCount * 24));
   const dependencyPaths: DependencyPath[] = [];
@@ -2555,7 +2606,7 @@ export function buildFrame(
         (lineHovered && display.dependencies.hoveredColor) ||
         display.dependencies.color;
       let emitted = false;
-      const segments = buildDependencySegments(
+      const { segments, arrowhead } = buildDependencySegments(
         predecessor,
         task,
         camera,
@@ -2581,6 +2632,20 @@ export function buildFrame(
       }
 
       if (emitted) {
+        if (arrowhead) {
+          dependencyTriangles.appendTriangle(
+            arrowhead.left.x,
+            arrowhead.left.y,
+            arrowhead.tip.x,
+            arrowhead.tip.y,
+            arrowhead.right.x,
+            arrowhead.right.y,
+            dependencyColor[0],
+            dependencyColor[1],
+            dependencyColor[2],
+            dependencyColor[3] * emphasis,
+          );
+        }
         dependencyPaths.push({
           id: dependencyId,
           sourceTaskId: depId,
@@ -2597,6 +2662,7 @@ export function buildFrame(
     foregroundSolids,
     backgroundLines,
     dependencyLines,
+    dependencyTriangles,
     glyphs,
     dependencyPaths,
     stats: {

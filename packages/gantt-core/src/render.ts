@@ -139,6 +139,43 @@ void main() {
 }
 `;
 
+const TRIANGLE_VERTEX = `#version 300 es
+precision highp float;
+
+layout(location = 0) in vec2 aP0;
+layout(location = 1) in vec2 aP1;
+layout(location = 2) in vec2 aP2;
+layout(location = 3) in vec4 aColor;
+
+uniform vec2 uScroll;
+uniform vec2 uZoom;
+uniform vec2 uViewport;
+
+out vec4 vColor;
+
+void main() {
+  vec2 world = gl_VertexID == 0 ? aP0 : (gl_VertexID == 1 ? aP1 : aP2);
+  vec2 screen = (world - uScroll) * uZoom;
+  vec2 ndc = vec2(
+    screen.x / uViewport.x * 2.0 - 1.0,
+    1.0 - screen.y / uViewport.y * 2.0
+  );
+  gl_Position = vec4(ndc, 0.0, 1.0);
+  vColor = aColor;
+}
+`;
+
+const TRIANGLE_FRAGMENT = `#version 300 es
+precision highp float;
+
+in vec4 vColor;
+out vec4 outColor;
+
+void main() {
+  outColor = vColor;
+}
+`;
+
 const TEXT_VERTEX = `#version 300 es
 precision highp float;
 
@@ -315,13 +352,16 @@ type RenderLayer = {
 export class GanttRenderer {
   private readonly solidProgram: WebGLProgram;
   private readonly lineProgram: WebGLProgram;
+  private readonly triangleProgram: WebGLProgram;
   private readonly textProgram: WebGLProgram;
   private readonly quadVao: WebGLVertexArrayObject;
   private readonly solidVao: WebGLVertexArrayObject;
   private readonly lineVao: WebGLVertexArrayObject;
+  private readonly triangleVao: WebGLVertexArrayObject;
   private readonly textVao: WebGLVertexArrayObject;
   private readonly solidBuffer: WebGLBuffer;
   private readonly lineBuffer: WebGLBuffer;
+  private readonly triangleBuffer: WebGLBuffer;
   private readonly textBuffer: WebGLBuffer;
   private readonly atlasTexture: WebGLTexture;
   private atlasSource: FontAtlas | null = null;
@@ -329,6 +369,7 @@ export class GanttRenderer {
   constructor(private readonly gl: WebGL2RenderingContext) {
     this.solidProgram = createProgram(gl, SOLID_VERTEX, SOLID_FRAGMENT);
     this.lineProgram = createProgram(gl, LINE_VERTEX, LINE_FRAGMENT);
+    this.triangleProgram = createProgram(gl, TRIANGLE_VERTEX, TRIANGLE_FRAGMENT);
     this.textProgram = createProgram(gl, TEXT_VERTEX, TEXT_FRAGMENT);
 
     const quad = setupCommonQuad(gl);
@@ -336,20 +377,23 @@ export class GanttRenderer {
 
     const solidVao = gl.createVertexArray();
     const lineVao = gl.createVertexArray();
+    const triangleVao = gl.createVertexArray();
     const textVao = gl.createVertexArray();
-    if (!solidVao || !lineVao || !textVao) {
+    if (!solidVao || !lineVao || !triangleVao || !textVao) {
       throw new Error('Unable to create WebGL VAO.');
     }
 
     this.solidVao = solidVao;
     this.lineVao = lineVao;
+    this.triangleVao = triangleVao;
     this.textVao = textVao;
 
     this.solidBuffer = gl.createBuffer() as WebGLBuffer;
     this.lineBuffer = gl.createBuffer() as WebGLBuffer;
+    this.triangleBuffer = gl.createBuffer() as WebGLBuffer;
     this.textBuffer = gl.createBuffer() as WebGLBuffer;
 
-    if (!this.solidBuffer || !this.lineBuffer || !this.textBuffer) {
+    if (!this.solidBuffer || !this.lineBuffer || !this.triangleBuffer || !this.textBuffer) {
       throw new Error('Unable to create WebGL instance buffers.');
     }
 
@@ -373,6 +417,14 @@ export class GanttRenderer {
     setInstancedAttribute(gl, 1, 4, 36, 0);
     setInstancedAttribute(gl, 2, 4, 36, 16);
     setInstancedAttribute(gl, 3, 1, 36, 32);
+    gl.bindVertexArray(null);
+
+    gl.bindVertexArray(this.triangleVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.triangleBuffer);
+    setInstancedAttribute(gl, 0, 2, 40, 0);
+    setInstancedAttribute(gl, 1, 2, 40, 8);
+    setInstancedAttribute(gl, 2, 2, 40, 16);
+    setInstancedAttribute(gl, 3, 4, 40, 24);
     gl.bindVertexArray(null);
 
     gl.bindVertexArray(this.textVao);
@@ -483,6 +535,15 @@ export class GanttRenderer {
       gl.bindBuffer(gl.ARRAY_BUFFER, this.lineBuffer);
       gl.bufferData(gl.ARRAY_BUFFER, frame.dependencyLines.view(), gl.DYNAMIC_DRAW);
       gl.drawElementsInstanced(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0, frame.dependencyLines.count);
+    }
+
+    if (frame.dependencyTriangles.count > 0) {
+      gl.useProgram(this.triangleProgram);
+      this.setCommonUniforms(this.triangleProgram, camera);
+      gl.bindVertexArray(this.triangleVao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.triangleBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, frame.dependencyTriangles.view(), gl.DYNAMIC_DRAW);
+      gl.drawArraysInstanced(gl.TRIANGLES, 0, 3, frame.dependencyTriangles.count);
     }
 
     if (frame.foregroundSolids.count > 0) {
