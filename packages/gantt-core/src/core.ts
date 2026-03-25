@@ -1026,34 +1026,67 @@ function mixColor(left: GanttColor, right: GanttColor, amount: number): GanttCol
   ];
 }
 
+function appendMilestonePrimitive(
+  solids: SolidInstanceWriter,
+  rect: { x: number; y: number; w: number; h: number },
+  fill: GanttColor,
+  emphasis: number,
+): void {
+  solids.appendRect(
+    rect.x,
+    rect.y,
+    rect.w,
+    rect.h,
+    fill[0],
+    fill[1],
+    fill[2],
+    fill[3],
+    1,
+    emphasis,
+    0,
+  );
+}
+
+function milestoneWorldRect(
+  task: GanttTask,
+  rowPitch: number,
+  barHeight: number,
+  camera: CameraState,
+  sizePx: number,
+): { x: number; y: number; w: number; h: number } {
+  const taskRect = taskWorldRect(task, rowPitch, barHeight);
+  const centerX = taskRect.x + taskRect.w * 0.5;
+  const centerY = task.rowIndex * rowPitch + rowPitch * 0.5;
+  const worldWidth = sizePx / Math.max(camera.zoomX, 0.0001);
+  const worldHeight = sizePx / Math.max(camera.zoomY, 0.0001);
+
+  return {
+    x: centerX - worldWidth * 0.5,
+    y: centerY - worldHeight * 0.5,
+    w: worldWidth,
+    h: worldHeight,
+  };
+}
+
 function appendTaskPrimitive(
   solids: SolidInstanceWriter,
+  camera: CameraState,
   task: GanttTask,
   options: Pick<FrameOptions, 'rowPitch' | 'barHeight' | 'milestoneSize'>,
   fill: GanttColor,
   emphasis: number,
   radiusPx: number,
 ): void {
-  const rowY = task.rowIndex * options.rowPitch;
-  const laneY = rowY + (options.rowPitch - options.barHeight) * 0.5;
-
   if (task.milestone) {
     const size = options.milestoneSize;
-    const centerX = task.start;
-    const centerY = laneY + options.barHeight * 0.5;
-    solids.appendRect(
-      centerX - size * 0.5,
-      centerY - size * 0.5,
-      size,
-      size,
-      fill[0],
-      fill[1],
-      fill[2],
-      fill[3],
-      1,
-      emphasis,
-      0,
+    const rect = milestoneWorldRect(
+      task,
+      options.rowPitch,
+      options.barHeight,
+      camera,
+      size * 2.4,
     );
+    appendMilestonePrimitive(solids, rect, fill, emphasis);
     return;
   }
 
@@ -1758,33 +1791,30 @@ export function buildFrame(
           display.tasks,
         );
       const emphasis = pluginStyle?.emphasis ?? defaultEmphasis;
-      const laneY = rowY + (config.rowPitch - config.barHeight) * 0.5;
+      const taskRect = taskWorldRect(task, config.rowPitch, config.barHeight);
+      const milestoneRect = task.milestone
+        ? milestoneWorldRect(
+            task,
+            config.rowPitch,
+            config.barHeight,
+            camera,
+            config.milestoneSize * (selected ? 1.15 : hovered ? 1.05 : 1) * 2.4,
+          )
+        : null;
 
       if (task.milestone) {
-        const size =
-          config.milestoneSize * (selected ? 1.15 : hovered ? 1.05 : 1);
-        const centerX = task.start;
-        const centerY = laneY + config.barHeight * 0.5;
-        foregroundSolids.appendRect(
-          centerX - size * 0.5,
-          centerY - size * 0.5,
-          size,
-          size,
-          fill[0],
-          fill[1],
-          fill[2],
-          fill[3],
-          1,
+        appendMilestonePrimitive(
+          foregroundSolids,
+          milestoneRect!,
+          fill,
           emphasis,
-          0,
         );
       } else {
-        const rect = taskWorldRect(task, config.rowPitch, config.barHeight);
         foregroundSolids.appendRect(
-          rect.x,
-          rect.y,
-          rect.w,
-          rect.h,
+          taskRect.x,
+          taskRect.y,
+          taskRect.w,
+          taskRect.h,
           fill[0],
           fill[1],
           fill[2],
@@ -1794,99 +1824,101 @@ export function buildFrame(
           display.tasks.barRadiusPx,
         );
 
-        if (labelTier.enabled) {
-          const screenX = (rect.x - camera.scrollX) * camera.zoomX;
-          const screenY = (rect.y - camera.scrollY) * camera.zoomY;
-          const screenW = rect.w * camera.zoomX;
-          const screenH = rect.h * camera.zoomY;
-          const scale = labelTier.fontPx / atlas.lineHeight;
-          const textBoxHeight = (atlas.ascender + atlas.descender) * scale;
-          const baseline =
-            screenY + (screenH - textBoxHeight) * 0.5 + atlas.ascender * scale;
-          const labelTop = baseline - atlas.ascender * scale;
-          const labelBottom = labelTop + textBoxHeight;
-          const labelColor = applyAlpha(
-            display.tasks.textColor,
-            computeHeaderOcclusionAlpha(
-              labelTop,
-              labelBottom,
-              config.headerHeight,
-              display.header.backgroundColor[3],
-            ),
-          );
-          const labelShadowColor = applyAlpha(
-            display.tasks.textShadowColor,
-            computeHeaderOcclusionAlpha(
-              labelTop,
-              labelBottom,
-              config.headerHeight,
-              display.header.backgroundColor[3],
-            ),
-          );
-          const fullLabelWidth = layout.measure(task.label, labelTier.fontPx);
-          const visibleLeft = clamp(screenX, 0, camera.viewportWidth);
-          const visibleRight = clamp(
-            screenX + screenW,
-            0,
-            camera.viewportWidth,
-          );
-          const visibleWidth = Math.max(0, visibleRight - visibleLeft);
-          const insideWidth = Math.max(
-            0,
-            visibleWidth - config.labelPadding * 2,
-          );
-          const fitsInside =
-            visibleWidth >= labelTier.minBarWidth &&
-            fullLabelWidth <= insideWidth;
+      }
 
-          if (fitsInside) {
-            const centeredLabelX =
-              visibleLeft + (visibleWidth - fullLabelWidth) * 0.5;
-            const minLabelX = visibleLeft + config.labelPadding;
-            const maxLabelX =
-              visibleRight - config.labelPadding - fullLabelWidth;
-            const labelX = clamp(centeredLabelX, minLabelX, maxLabelX);
+      if (labelTier.enabled) {
+        const rect = milestoneRect ?? taskRect;
+        const screenX = (rect.x - camera.scrollX) * camera.zoomX;
+        const screenY = (rect.y - camera.scrollY) * camera.zoomY;
+        const screenW = rect.w * camera.zoomX;
+        const screenH = rect.h * camera.zoomY;
+        const scale = labelTier.fontPx / atlas.lineHeight;
+        const textBoxHeight = (atlas.ascender + atlas.descender) * scale;
+        const baseline =
+          screenY + (screenH - textBoxHeight) * 0.5 + atlas.ascender * scale;
+        const labelTop = baseline - atlas.ascender * scale;
+        const labelBottom = labelTop + textBoxHeight;
+        const labelColor = applyAlpha(
+          display.tasks.textColor,
+          computeHeaderOcclusionAlpha(
+            labelTop,
+            labelBottom,
+            config.headerHeight,
+            display.header.backgroundColor[3],
+          ),
+        );
+        const labelShadowColor = applyAlpha(
+          display.tasks.textShadowColor,
+          computeHeaderOcclusionAlpha(
+            labelTop,
+            labelBottom,
+            config.headerHeight,
+            display.header.backgroundColor[3],
+          ),
+        );
+        const fullLabelWidth = layout.measure(task.label, labelTier.fontPx);
+        const visibleLeft = clamp(screenX, 0, camera.viewportWidth);
+        const visibleRight = clamp(
+          screenX + screenW,
+          0,
+          camera.viewportWidth,
+        );
+        const visibleWidth = Math.max(0, visibleRight - visibleLeft);
+        const insideWidth = Math.max(
+          0,
+          visibleWidth - config.labelPadding * 2,
+        );
+        const fitsInside =
+          visibleWidth >= labelTier.minBarWidth &&
+          fullLabelWidth <= insideWidth;
+
+        if (fitsInside) {
+          const centeredLabelX =
+            visibleLeft + (visibleWidth - fullLabelWidth) * 0.5;
+          const minLabelX = visibleLeft + config.labelPadding;
+          const maxLabelX =
+            visibleRight - config.labelPadding - fullLabelWidth;
+          const labelX = clamp(centeredLabelX, minLabelX, maxLabelX);
+          appendLabelWithShadow(
+            glyphs,
+            layout,
+            task.label,
+            labelX,
+            baseline,
+            labelTier.fontPx,
+            labelColor,
+            labelShadowColor,
+            fullLabelWidth,
+          );
+        } else {
+          const labelX = screenX + screenW + config.labelPadding;
+          const availableWidth = Math.max(
+            0,
+            camera.viewportWidth - labelX - config.labelPadding,
+          );
+          const label = layout.fit(
+            task.label,
+            availableWidth,
+            labelTier.fontPx,
+          );
+          if (label.length > 0) {
             appendLabelWithShadow(
               glyphs,
               layout,
-              task.label,
+              label,
               labelX,
               baseline,
               labelTier.fontPx,
               labelColor,
               labelShadowColor,
-              fullLabelWidth,
-            );
-          } else {
-            const labelX = screenX + screenW + config.labelPadding;
-            const availableWidth = Math.max(
-              0,
               camera.viewportWidth - labelX - config.labelPadding,
             );
-            const label = layout.fit(
-              task.label,
-              availableWidth,
-              labelTier.fontPx,
-            );
-            if (label.length > 0) {
-              appendLabelWithShadow(
-                glyphs,
-                layout,
-                label,
-                labelX,
-                baseline,
-                labelTier.fontPx,
-                labelColor,
-                labelShadowColor,
-                camera.viewportWidth - labelX - config.labelPadding,
-              );
-            }
           }
         }
       }
 
       if (showSelectionOutlines && selected) {
-        const rect = taskWorldRect(task, config.rowPitch, config.barHeight);
+        const rect = milestoneRect ?? taskRect;
         const outlineColor = mixColor(fill, [1, 1, 1, 1], 0.42);
         appendRectOutline(
           foregroundSolids,
@@ -1930,6 +1962,7 @@ export function buildFrame(
       ghostFill[3] = 0.18;
       appendTaskPrimitive(
         foregroundSolids,
+        camera,
         originalTask,
         config,
         ghostFill,

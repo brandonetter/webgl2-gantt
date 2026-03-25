@@ -36,35 +36,154 @@ type SceneTaskInput = {
 const timelineScene = createScene(
   ['Scope', 'Design', 'Build', 'QA', 'Launch', 'Review'],
   [
-    { id: 'timeline-scope', rowIndex: 0, startDate: '2026-08-03', endDate: '2026-08-06', label: 'Scope' },
-    { id: 'timeline-design', rowIndex: 1, startDate: '2026-08-06', endDate: '2026-08-12', label: 'Design', dependencies: ['timeline-scope'] },
-    { id: 'timeline-build', rowIndex: 2, startDate: '2026-08-10', endDate: '2026-08-20', label: 'Build', dependencies: ['timeline-design'] },
-    { id: 'timeline-qa', rowIndex: 3, startDate: '2026-08-18', endDate: '2026-08-24', label: 'QA', dependencies: ['timeline-build'] },
-    { id: 'timeline-launch', rowIndex: 4, startDate: '2026-08-25', endDate: '2026-08-27', label: 'Launch', dependencies: ['timeline-qa'], milestone: true },
-    { id: 'timeline-review', rowIndex: 5, startDate: '2026-08-28', endDate: '2026-08-29', label: 'Review', dependencies: ['timeline-launch'] },
+    {
+      id: 'timeline-scope',
+      rowIndex: 0,
+      startDate: '2026-08-03',
+      endDate: '2026-08-06',
+      label: 'Scope',
+    },
+    {
+      id: 'timeline-design',
+      rowIndex: 1,
+      startDate: '2026-08-06',
+      endDate: '2026-08-12',
+      label: 'Design',
+      dependencies: ['timeline-scope'],
+    },
+    {
+      id: 'timeline-build',
+      rowIndex: 2,
+      startDate: '2026-08-10',
+      endDate: '2026-08-20',
+      label: 'Build',
+      dependencies: ['timeline-design'],
+    },
+    {
+      id: 'timeline-qa',
+      rowIndex: 3,
+      startDate: '2026-08-18',
+      endDate: '2026-08-24',
+      label: 'QA',
+      dependencies: ['timeline-build'],
+    },
+    {
+      id: 'timeline-launch',
+      rowIndex: 4,
+      startDate: '2026-08-25',
+      endDate: '2026-08-25',
+      label: 'Launch',
+      dependencies: ['timeline-qa'],
+      milestone: true,
+    },
+    {
+      id: 'timeline-review',
+      rowIndex: 5,
+      startDate: '2026-08-28',
+      endDate: '2026-08-29',
+      label: 'Review',
+      dependencies: ['timeline-launch'],
+    },
   ],
 );
 
 const editingScene = createScene(
   ['Brief', 'Design', 'Build', 'QA', 'Release'],
   [
-    { id: 'edit-brief', rowIndex: 0, startDate: '2026-09-01', endDate: '2026-09-03', label: 'Brief' },
-    { id: 'edit-design', rowIndex: 1, startDate: '2026-09-03', endDate: '2026-09-08', label: 'Design', dependencies: ['edit-brief'] },
-    { id: 'edit-build', rowIndex: 2, startDate: '2026-09-05', endDate: '2026-09-12', label: 'Build', dependencies: ['edit-design'] },
-    { id: 'edit-qa', rowIndex: 3, startDate: '2026-09-11', endDate: '2026-09-15', label: 'QA', dependencies: ['edit-build'] },
-    { id: 'edit-release', rowIndex: 4, startDate: '2026-09-16', endDate: '2026-09-18', label: 'Release', dependencies: ['edit-qa'], milestone: true },
+    {
+      id: 'edit-brief',
+      rowIndex: 0,
+      startDate: '2026-09-01',
+      endDate: '2026-09-03',
+      label: 'Brief',
+    },
+    {
+      id: 'edit-design',
+      rowIndex: 1,
+      startDate: '2026-09-03',
+      endDate: '2026-09-08',
+      label: 'Design',
+      dependencies: ['edit-brief'],
+    },
+    {
+      id: 'edit-build',
+      rowIndex: 2,
+      startDate: '2026-09-05',
+      endDate: '2026-09-12',
+      label: 'Build',
+      dependencies: ['edit-design'],
+    },
+    {
+      id: 'edit-qa',
+      rowIndex: 3,
+      startDate: '2026-09-11',
+      endDate: '2026-09-15',
+      label: 'QA',
+      dependencies: ['edit-build'],
+    },
+    {
+      id: 'edit-release',
+      rowIndex: 4,
+      startDate: '2026-09-16',
+      endDate: '2026-09-16',
+      label: 'Release',
+      dependencies: ['edit-qa'],
+      milestone: true,
+    },
   ],
 );
 
 const jsonPluginScene = createScene(
   ['Brief', 'Prototype', 'Legal', 'Pricing', 'QA', 'Release'],
   [
-    { id: 'json-brief', rowIndex: 0, startDate: '2026-10-01', endDate: '2026-10-03', label: 'Release brief' },
-    { id: 'json-prototype', rowIndex: 1, startDate: '2026-10-03', endDate: '2026-10-09', label: 'Prototype handoff', dependencies: ['json-brief'] },
-    { id: 'json-legal', rowIndex: 2, startDate: '2026-10-04', endDate: '2026-10-08', label: 'Legal review', dependencies: ['json-brief'] },
-    { id: 'json-pricing', rowIndex: 3, startDate: '2026-10-09', endDate: '2026-10-13', label: 'Packaging and pricing', dependencies: ['json-prototype', 'json-legal'] },
-    { id: 'json-qa', rowIndex: 4, startDate: '2026-10-14', endDate: '2026-10-18', label: 'Final QA', dependencies: ['json-pricing'] },
-    { id: 'json-release', rowIndex: 5, startDate: '2026-10-19', endDate: '2026-10-21', label: 'Release approval', dependencies: ['json-qa'], milestone: true },
+    {
+      id: 'json-brief',
+      rowIndex: 0,
+      startDate: '2026-10-01',
+      endDate: '2026-10-03',
+      label: 'Release brief',
+    },
+    {
+      id: 'json-prototype',
+      rowIndex: 1,
+      startDate: '2026-10-03',
+      endDate: '2026-10-09',
+      label: 'Prototype handoff',
+      dependencies: ['json-brief'],
+    },
+    {
+      id: 'json-legal',
+      rowIndex: 2,
+      startDate: '2026-10-04',
+      endDate: '2026-10-08',
+      label: 'Legal review',
+      dependencies: ['json-brief'],
+    },
+    {
+      id: 'json-pricing',
+      rowIndex: 3,
+      startDate: '2026-10-09',
+      endDate: '2026-10-13',
+      label: 'Packaging and pricing',
+      dependencies: ['json-prototype', 'json-legal'],
+    },
+    {
+      id: 'json-qa',
+      rowIndex: 4,
+      startDate: '2026-10-14',
+      endDate: '2026-10-18',
+      label: 'Final QA',
+      dependencies: ['json-pricing'],
+    },
+    {
+      id: 'json-release',
+      rowIndex: 5,
+      startDate: '2026-10-19',
+      endDate: '2026-10-19',
+      label: 'Release approval',
+      dependencies: ['json-qa'],
+      milestone: true,
+    },
   ],
 );
 
@@ -91,7 +210,10 @@ function createScene(rowLabels: string[], tasks: SceneTaskInput[]): GanttScene {
   };
 }
 
-function expandScene(scene: GanttScene, options: { copies: number; dayOffset: number; labelSuffixes: string[] }): GanttScene {
+function expandScene(
+  scene: GanttScene,
+  options: { copies: number; dayOffset: number; labelSuffixes: string[] },
+): GanttScene {
   const baseRows = scene.rowLabels.length;
   const tasks: GanttTask[] = [];
   const rowLabels: string[] = [];
@@ -126,12 +248,16 @@ function expandScene(scene: GanttScene, options: { copies: number; dayOffset: nu
         return;
       }
 
-      const sourceTask = scene.tasks.find((candidate) => `${taskIdPrefix}-${candidate.id}` === task.id);
+      const sourceTask = scene.tasks.find(
+        (candidate) => `${taskIdPrefix}-${candidate.id}` === task.id,
+      );
       if (!sourceTask?.dependencies?.length) {
         return;
       }
 
-      task.dependencies = sourceTask.dependencies.map((dependency) => taskIdMap.get(dependency) ?? dependency);
+      task.dependencies = sourceTask.dependencies.map(
+        (dependency) => taskIdMap.get(dependency) ?? dependency,
+      );
     });
   }
 
@@ -158,7 +284,9 @@ function demoMsdfManifestUrls() {
   };
 }
 
-function createEditConfig(defaultMode: 'view' | 'select' | 'edit'): GanttConfig['edit'] {
+function createEditConfig(
+  defaultMode: 'view' | 'select' | 'edit',
+): GanttConfig['edit'] {
   return {
     enabled: true,
     defaultMode,
@@ -280,7 +408,9 @@ function getMount(id: MountId): HTMLElement {
   return element;
 }
 
-function createTimelineConfig(msdfManifestUrls: Record<string, string>): GanttConfig {
+function createTimelineConfig(
+  msdfManifestUrls: Record<string, string>,
+): GanttConfig {
   return createDemoConfig(
     expandScene(timelineScene, {
       copies: 3,
@@ -290,15 +420,17 @@ function createTimelineConfig(msdfManifestUrls: Record<string, string>): GanttCo
     'paper-light',
     msdfManifestUrls,
     {
-    title: 'Timeline view',
-    height: tallerDemoHeight(408),
-    defaultMode: 'view',
-    statusText: 'View mode. Mousewheel zoom and drag to pan.',
+      title: 'Timeline view',
+      height: tallerDemoHeight(408),
+      defaultMode: 'view',
+      statusText: 'View mode. Mousewheel zoom and drag to pan.',
     },
   );
 }
 
-function createEditingConfig(msdfManifestUrls: Record<string, string>): GanttConfig {
+function createEditingConfig(
+  msdfManifestUrls: Record<string, string>,
+): GanttConfig {
   return createDemoConfig(
     expandScene(editingScene, {
       copies: 3,
@@ -308,15 +440,17 @@ function createEditingConfig(msdfManifestUrls: Record<string, string>): GanttCon
     'paper-light',
     msdfManifestUrls,
     {
-    title: 'Editing demo',
-    height: tallerDemoHeight(426),
-    defaultMode: 'edit',
-    statusText: 'Edit mode. Resize bars, move work, commit changes.',
+      title: 'Editing demo',
+      height: tallerDemoHeight(426),
+      defaultMode: 'edit',
+      statusText: 'Edit mode. Resize bars, move work, commit changes.',
     },
   );
 }
 
-function createPluginConfig(msdfManifestUrls: Record<string, string>): GanttConfig {
+function createPluginConfig(
+  msdfManifestUrls: Record<string, string>,
+): GanttConfig {
   return createDemoConfig(
     expandScene(jsonPluginScene, {
       copies: 3,
@@ -326,29 +460,32 @@ function createPluginConfig(msdfManifestUrls: Record<string, string>): GanttConf
     'standard',
     msdfManifestUrls,
     {
-    title: 'Extensibility demo',
-    height: tallerDemoHeight(438),
-    defaultMode: 'view',
-    statusText: 'Extensions add behavior without changing the core.',
-    plugins: [
-      {
-        source: {
-          type: 'esm',
-          url: pluginUrl('./plugins/editable-commit-log-plugin.mjs'),
+      title: 'Extensibility demo',
+      height: tallerDemoHeight(438),
+      defaultMode: 'view',
+      statusText: 'Extensions add behavior without changing the core.',
+      plugins: [
+        {
+          source: {
+            type: 'esm',
+            url: pluginUrl('./plugins/editable-commit-log-plugin.mjs'),
+          },
+          idHint: 'json-plugin',
+          options: {
+            panelLabel: 'Extension module',
+            accentColor: '#d57a35',
+            maxCommits: 4,
+          },
         },
-        idHint: 'json-plugin',
-        options: {
-          panelLabel: 'Extension module',
-          accentColor: '#d57a35',
-          maxCommits: 4,
-        },
-      },
-    ],
+      ],
     },
   );
 }
 
-async function mountDemo(target: HTMLElement, config: GanttConfig): Promise<GanttHost> {
+async function mountDemo(
+  target: HTMLElement,
+  config: GanttConfig,
+): Promise<GanttHost> {
   return createGanttHost(target, config);
 }
 
@@ -359,9 +496,24 @@ async function boot(): Promise<void> {
   const hosts: GanttHost[] = [];
 
   try {
-    hosts.push(await mountDemo(getMount('timeline-demo'), createTimelineConfig(msdfManifestUrls)));
-    hosts.push(await mountDemo(getMount('editing-demo'), createEditingConfig(msdfManifestUrls)));
-    hosts.push(await mountDemo(getMount('json-plugin'), createPluginConfig(msdfManifestUrls)));
+    hosts.push(
+      await mountDemo(
+        getMount('timeline-demo'),
+        createTimelineConfig(msdfManifestUrls),
+      ),
+    );
+    hosts.push(
+      await mountDemo(
+        getMount('editing-demo'),
+        createEditingConfig(msdfManifestUrls),
+      ),
+    );
+    hosts.push(
+      await mountDemo(
+        getMount('json-plugin'),
+        createPluginConfig(msdfManifestUrls),
+      ),
+    );
   } catch (error) {
     await Promise.allSettled(hosts.map((host) => host.dispose()));
     throw error;

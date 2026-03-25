@@ -51,9 +51,9 @@ void main() {
 
   if (kind > 0.5) {
     vec2 p = vLocal * 2.0 - 1.0;
-    if (abs(p.x) + abs(p.y) > 1.0) {
-      discard;
-    }
+    float diamondDistance = 1.0 - (abs(p.x) + abs(p.y));
+    float aa = max(fwidth(diamondDistance), 1e-4);
+    alpha *= smoothstep(-aa, aa, diamondDistance);
   } else if (radiusPx > 0.0) {
     float safeRadiusPx = min(radiusPx, 0.5 * min(vSizePx.x, vSizePx.y));
     vec2 radiusUv = vec2(safeRadiusPx / vSizePx.x, safeRadiusPx / vSizePx.y);

@@ -50,6 +50,64 @@ describe('frame assembly', () => {
     expect(frame.dependencyLines.count).toBeGreaterThan(0);
   });
 
+  it('keeps milestone diamonds centered and larger under anisotropic zoom', () => {
+    const atlas = makeTestAtlas();
+    const layout = new TextLayoutEngine(atlas);
+    const scene = {
+      rowLabels: ['Row 1'],
+      timelineStart: 0,
+      timelineEnd: 80,
+      tasks: [{ id: 'm', rowIndex: 0, start: 20, end: 21, label: 'Milestone', milestone: true }],
+    };
+    const index = buildTaskIndex(scene.tasks);
+    const camera = {
+      ...createCamera(800, 240),
+      zoomX: 4,
+      zoomY: 1,
+      scrollX: 0,
+      scrollY: 0,
+    };
+
+    const frame = buildFrame(
+      scene,
+      index,
+      camera,
+      atlas,
+      layout,
+      {
+        selectedTaskId: null,
+        hoveredTaskId: null,
+        selectedDependencyId: null,
+        hoveredDependencyId: null,
+      },
+      {
+        rowPitch: 30,
+        barHeight: 16,
+        milestoneSize: 12,
+      },
+    );
+
+    const solids = frame.foregroundSolids.view();
+    let milestoneOffset = -1;
+    for (let offset = 0; offset < solids.length; offset += 12) {
+      if (solids[offset + 8] === 1) {
+        milestoneOffset = offset;
+        break;
+      }
+    }
+
+    expect(milestoneOffset).toBeGreaterThanOrEqual(0);
+    const x = solids[milestoneOffset + 0];
+    const y = solids[milestoneOffset + 1];
+    const w = solids[milestoneOffset + 2];
+    const h = solids[milestoneOffset + 3];
+    expect(x).toBeCloseTo(16.9);
+    expect(y).toBeCloseTo(0.6);
+    expect(w * camera.zoomX).toBeCloseTo(28.8);
+    expect(h * camera.zoomY).toBeCloseTo(28.8);
+    expect(frame.glyphs.count).toBeGreaterThan(0);
+  });
+
   it('keeps down-right dependency routing topology stable across zoom levels', () => {
     const atlas = makeTestAtlas();
     const layout = new TextLayoutEngine(atlas);
