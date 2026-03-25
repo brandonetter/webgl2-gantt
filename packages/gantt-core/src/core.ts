@@ -113,6 +113,8 @@ type Point = {
   y: number;
 };
 
+type AttachmentSide = 'left' | 'right';
+
 export type DependencyPath = {
   id: string;
   sourceTaskId: string;
@@ -407,6 +409,7 @@ export class SolidInstanceWriter extends FloatInstanceBuffer {
     kind: number,
     emphasis: number,
     radiusPx = 0,
+    edgeTintStrength = 1,
   ): void {
     this.ensure();
     const offset = this.count * this.stride;
@@ -421,7 +424,7 @@ export class SolidInstanceWriter extends FloatInstanceBuffer {
     this.data[offset + 8] = kind;
     this.data[offset + 9] = emphasis;
     this.data[offset + 10] = radiusPx;
-    this.data[offset + 11] = 0;
+    this.data[offset + 11] = edgeTintStrength;
     this.count += 1;
   }
 }
@@ -926,27 +929,84 @@ function rowFillColor(
 
 function appendLabelWithShadow(
   glyphs: GlyphInstanceWriter,
+  solids: SolidInstanceWriter,
   layout: TextLayoutEngine,
+  camera: CameraState,
   text: string,
   x: number,
   baselineY: number,
   fontPx: number,
   color: GanttColor,
   shadowColor: GanttColor,
+  occluderColor: GanttColor,
   maxWidth: number,
+  occluderMode: 'none' | 'run',
 ): void {
   const shadowOffsetX = Math.max(0.5, fontPx * 0.025);
   const shadowOffsetY = Math.max(0.5, fontPx * 0.045);
+  const visibleText = Number.isFinite(maxWidth)
+    ? layout.fit(text, maxWidth, fontPx)
+    : text;
+  if (visibleText.length === 0) {
+    return;
+  }
+
+  if (occluderMode === 'run') {
+    const atlas = layout.getAtlas();
+    const scale = fontPx / atlas.lineHeight;
+    const textWidth = layout.measure(visibleText, fontPx);
+    const textHeight = (atlas.ascender + atlas.descender) * scale;
+    const bleedPx = 0.5;
+    appendScreenSpaceOccluder(
+      solids,
+      camera,
+      x - bleedPx,
+      baselineY - atlas.ascender * scale - bleedPx,
+      textWidth + bleedPx * 2,
+      textHeight + bleedPx * 2,
+      occluderColor,
+    );
+  }
+
   layout.appendText(
     glyphs,
-    text,
+    visibleText,
     x + shadowOffsetX,
     baselineY + shadowOffsetY,
     fontPx,
     shadowColor,
-    maxWidth,
   );
-  layout.appendText(glyphs, text, x, baselineY, fontPx, color, maxWidth);
+  layout.appendText(glyphs, visibleText, x, baselineY, fontPx, color);
+}
+
+function appendScreenSpaceOccluder(
+  solids: SolidInstanceWriter,
+  camera: CameraState,
+  leftPx: number,
+  topPx: number,
+  widthPx: number,
+  heightPx: number,
+  color: GanttColor,
+  radiusPx = 0,
+): void {
+  if (widthPx <= 0 || heightPx <= 0) {
+    return;
+  }
+
+  solids.appendRect(
+    camera.scrollX + leftPx / camera.zoomX,
+    camera.scrollY + topPx / camera.zoomY,
+    widthPx / camera.zoomX,
+    heightPx / camera.zoomY,
+    color[0],
+    color[1],
+    color[2],
+    1,
+    0,
+    0,
+    radiusPx,
+    0,
+  );
 }
 
 function applyAlpha(
@@ -954,6 +1014,23 @@ function applyAlpha(
   alphaMultiplier: number,
 ): GanttColor {
   return [color[0], color[1], color[2], color[3] * clamp(alphaMultiplier, 0, 1)];
+}
+
+function compositeColor(
+  under: GanttColor,
+  over: GanttColor,
+): GanttColor {
+  const outAlpha = over[3] + under[3] * (1 - over[3]);
+  if (outAlpha <= 0.0001) {
+    return [0, 0, 0, 0];
+  }
+
+  return [
+    (over[0] * over[3] + under[0] * under[3] * (1 - over[3])) / outAlpha,
+    (over[1] * over[3] + under[1] * under[3] * (1 - over[3])) / outAlpha,
+    (over[2] * over[3] + under[2] * under[3] * (1 - over[3])) / outAlpha,
+    outAlpha,
+  ];
 }
 
 function computeHeaderOcclusionAlpha(
@@ -1445,6 +1522,266 @@ function buildRoundedSegments(
   return segments;
 }
 
+function rectCenterX(rect: { x: number; w: number }): number {
+  return rect.x + rect.w * 0.5;
+}
+
+function rectCenterY(rect: { y: number; h: number }): number {
+  return rect.y + rect.h * 0.5;
+}
+
+function rectEdgeX(rect: { x: number; w: number }, side: AttachmentSide): number {
+  return side === 'left' ? rect.x : rect.x + rect.w;
+}
+
+function oppositeSide(side: AttachmentSide): AttachmentSide {
+  return side === 'left' ? 'right' : 'left';
+}
+
+function buildAnchor(
+  rect: { x: number; y: number; w: number; h: number },
+  side: AttachmentSide,
+): Point {
+  return {
+    x: rectEdgeX(rect, side),
+    y: rectCenterY(rect),
+  };
+}
+
+function buildSourceAnchor(
+  rect: { x: number; y: number; w: number; h: number },
+  x: number,
+): Point {
+  return {
+    x,
+    y: rectCenterY(rect),
+  };
+}
+
+function buildSourceAnchors(
+  task: GanttTask,
+  rect: { x: number; y: number; w: number; h: number },
+  camera: CameraState,
+): Point[] {
+  if (task.milestone) {
+    return [buildSourceAnchor(rect, rectCenterX(rect))];
+  }
+
+  const centerX = rectCenterX(rect);
+  const minX = rect.x;
+  const maxX = rect.x + rect.w;
+  const anchors: Point[] = [];
+  const pushAnchor = (x: number): void => {
+    const clamped = clamp(x, minX, maxX);
+    if (
+      anchors.some((anchor) => Math.abs(anchor.x - clamped) < 0.001)
+    ) {
+      return;
+    }
+
+    anchors.push(buildSourceAnchor(rect, clamped));
+  };
+
+  for (let day = Math.ceil(rect.x); day <= Math.floor(rect.x + rect.w); day += 1) {
+    pushAnchor(day);
+  }
+
+  if (anchors.length === 0) {
+    pushAnchor(centerX);
+  }
+
+  return anchors;
+}
+
+function polylineLength(points: Point[]): number {
+  let length = 0;
+  for (let i = 1; i < points.length; i += 1) {
+    const dx = points[i].x - points[i - 1].x;
+    const dy = points[i].y - points[i - 1].y;
+    length += Math.hypot(dx, dy);
+  }
+  return length;
+}
+
+function simplifyRoutePoints(points: Point[]): Point[] {
+  const simplified: Point[] = [];
+
+  for (const point of points) {
+    const previous = simplified[simplified.length - 1];
+    if (
+      previous &&
+      Math.abs(previous.x - point.x) < 0.001 &&
+      Math.abs(previous.y - point.y) < 0.001
+    ) {
+      continue;
+    }
+
+    simplified.push(point);
+  }
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let i = 1; i < simplified.length - 1; i += 1) {
+      const prev = simplified[i - 1];
+      const curr = simplified[i];
+      const next = simplified[i + 1];
+      const prevDx = curr.x - prev.x;
+      const prevDy = curr.y - prev.y;
+      const nextDx = next.x - curr.x;
+      const nextDy = next.y - curr.y;
+      const collinear =
+        (Math.abs(prevDx) < 0.001 && Math.abs(nextDx) < 0.001) ||
+        (Math.abs(prevDy) < 0.001 && Math.abs(nextDy) < 0.001);
+
+      if (!collinear) {
+        continue;
+      }
+
+      simplified.splice(i, 1);
+      changed = true;
+      break;
+    }
+  }
+
+  return simplified;
+}
+
+function routeSegmentScore(dx: number, dy: number): number {
+  if (Math.abs(dx) >= Math.abs(dy) && Math.abs(dx) >= 0.001) {
+    return dx > 0 ? 0 : 1;
+  }
+
+  return 2;
+}
+
+function findRouteSegment(
+  points: Point[],
+  fromStart: 'start' | 'end',
+): { dx: number; dy: number; length: number } | null {
+  if (fromStart === 'start') {
+    for (let i = 1; i < points.length; i += 1) {
+      const dx = points[i].x - points[i - 1].x;
+      const dy = points[i].y - points[i - 1].y;
+      const length = Math.hypot(dx, dy);
+      if (length >= 0.001) {
+        return { dx, dy, length };
+      }
+    }
+    return null;
+  }
+
+  for (let i = points.length - 1; i > 0; i -= 1) {
+    const dx = points[i].x - points[i - 1].x;
+    const dy = points[i].y - points[i - 1].y;
+    const length = Math.hypot(dx, dy);
+    if (length >= 0.001) {
+      return { dx, dy, length };
+    }
+  }
+
+  return null;
+}
+
+function horizontalLegPenalty(
+  segment: { dx: number; dy: number; length: number } | null,
+  minLength: number,
+): number {
+  if (!segment) {
+    return 2;
+  }
+
+  if (Math.abs(segment.dx) >= Math.abs(segment.dy) && Math.abs(segment.dx) >= 0.001) {
+    return Math.abs(segment.dx) >= minLength ? 0 : 1;
+  }
+
+  return 2;
+}
+
+function segmentIntersectsRectInterior(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  rect: { x: number; y: number; w: number; h: number },
+): boolean {
+  const epsilon = 0.001;
+  const rectLeft = rect.x + epsilon;
+  const rectRight = rect.x + rect.w - epsilon;
+  const rectTop = rect.y + epsilon;
+  const rectBottom = rect.y + rect.h - epsilon;
+
+  if (Math.abs(x1 - x2) < epsilon) {
+    if (x1 <= rectLeft || x1 >= rectRight) {
+      return false;
+    }
+
+    const minY = Math.min(y1, y2);
+    const maxY = Math.max(y1, y2);
+    return maxY > rectTop && minY < rectBottom;
+  }
+
+  if (Math.abs(y1 - y2) < epsilon) {
+    if (y1 <= rectTop || y1 >= rectBottom) {
+      return false;
+    }
+
+    const minX = Math.min(x1, x2);
+    const maxX = Math.max(x1, x2);
+    return maxX > rectLeft && minX < rectRight;
+  }
+
+  return false;
+}
+
+function routeOverlayPenalty(
+  points: Point[],
+  targetRect: { x: number; y: number; w: number; h: number },
+): number {
+  let penalty = 0;
+
+  for (let i = 1; i < points.length - 1; i += 1) {
+    if (
+      segmentIntersectsRectInterior(
+        points[i - 1].x,
+        points[i - 1].y,
+        points[i].x,
+        points[i].y,
+        targetRect,
+      )
+    ) {
+      penalty += 1;
+    }
+  }
+
+  return penalty;
+}
+
+function routeSourceOffsetScore(
+  sourceAnchor: Point,
+  sourceRect: { x: number; w: number },
+): number {
+  return Math.abs(sourceAnchor.x - rectCenterX(sourceRect));
+}
+
+function getDependencyTaskRect(
+  task: GanttTask,
+  config: FrameOptions,
+  camera: CameraState,
+): { x: number; y: number; w: number; h: number } {
+  if (task.milestone) {
+    return milestoneWorldRect(
+      task,
+      config.rowPitch,
+      config.barHeight,
+      camera,
+      config.milestoneSize * 2.4,
+    );
+  }
+
+  return taskWorldRect(task, config.rowPitch, config.barHeight);
+}
+
 function buildDependencySegments(
   sourceTask: GanttTask,
   targetTask: GanttTask,
@@ -1452,62 +1789,166 @@ function buildDependencySegments(
   config: FrameOptions,
   display: NormalizedGanttDisplayConfig['dependencies'],
 ): DependencySegment[] {
-  const sourceRect = taskWorldRect(
-    sourceTask,
-    config.rowPitch,
-    config.barHeight,
-  );
-  const targetRect = taskWorldRect(
-    targetTask,
-    config.rowPitch,
-    config.barHeight,
-  );
-  const sourceAnchor = {
-    x: sourceRect.x + sourceRect.w * 0.5,
-    y: sourceRect.y + sourceRect.h,
-  };
-  const targetAnchor = {
-    x: targetRect.x,
-    y: targetRect.y + targetRect.h * 0.5,
-  };
-
+  const sourceRect = getDependencyTaskRect(sourceTask, config, camera);
+  const targetRect = getDependencyTaskRect(targetTask, config, camera);
   const cornerRadius = Math.max(0, display.cornerRadiusPx / camera.zoomX);
-  const verticalOffset = Math.max(
-    display.verticalOffsetPx / camera.zoomY,
-    (config.rowPitch - config.barHeight) * 0.5 + 2 / camera.zoomY,
-  );
-  const points: Point[] = [sourceAnchor];
-  const targetIsBelow = targetAnchor.y >= sourceAnchor.y;
-  const targetIsToRight = targetAnchor.x >= sourceAnchor.x;
 
-  if (targetIsBelow && targetIsToRight) {
-    points.push({ x: sourceAnchor.x, y: targetAnchor.y });
-  } else if (!targetIsBelow && targetIsToRight) {
-    const laneY = Math.max(
-      sourceAnchor.y + verticalOffset,
-      targetRect.y + targetRect.h + 6 / camera.zoomY,
-    );
-    points.push({ x: sourceAnchor.x, y: laneY });
-    points.push({ x: targetAnchor.x, y: laneY });
-    points.push({ x: targetAnchor.x, y: targetAnchor.y });
+  const sourceCenterX = rectCenterX(sourceRect);
+  const targetCenterX = rectCenterX(targetRect);
+  const sourceIsLeftOfTarget = sourceCenterX <= targetCenterX;
+  const sourceSameRowAsTarget = sourceTask.rowIndex === targetTask.rowIndex;
+  const routePadding = Math.max(
+    1,
+    Math.min(3, Math.min(sourceRect.w, targetRect.w) * 0.25),
+  );
+  const minFinalApproach = routePadding;
+  const minSourceExit = routePadding;
+  const outerPadding = routePadding + Math.max(
+    1,
+    Math.min(2, Math.min(sourceRect.w, targetRect.w) * 0.15),
+  );
+
+  const candidates: {
+    points: Point[];
+    overlayPenalty: number;
+    finalDirectionScore: number;
+    finalApproachPenalty: number;
+    firstDirectionScore: number;
+    firstExitPenalty: number;
+    turnCount: number;
+    length: number;
+    sourceOffsetScore: number;
+  }[] = [];
+
+  const pushCandidate = (
+    rawPoints: Point[],
+    sourceAnchor: Point,
+  ): void => {
+    const points = simplifyRoutePoints(rawPoints);
+    if (points.length < 2) {
+      return;
+    }
+
+    const firstSegment = findRouteSegment(points, 'start');
+    const finalSegment = findRouteSegment(points, 'end');
+    candidates.push({
+      points,
+      overlayPenalty: routeOverlayPenalty(points, targetRect),
+      finalDirectionScore: finalSegment ? routeSegmentScore(finalSegment.dx, finalSegment.dy) : 2,
+      finalApproachPenalty: horizontalLegPenalty(finalSegment, minFinalApproach),
+      firstDirectionScore: firstSegment ? routeSegmentScore(firstSegment.dx, firstSegment.dy) : 2,
+      firstExitPenalty: horizontalLegPenalty(firstSegment, minSourceExit),
+      turnCount: Math.max(0, points.length - 2),
+      length: polylineLength(points),
+      sourceOffsetScore: routeSourceOffsetScore(sourceAnchor, sourceRect),
+    });
+  };
+
+  if (sourceSameRowAsTarget) {
+    const sourceSide: AttachmentSide = sourceIsLeftOfTarget ? 'right' : 'left';
+    const targetSide = oppositeSide(sourceSide);
+    const points = [
+      buildAnchor(sourceRect, sourceSide),
+      buildAnchor(targetRect, targetSide),
+    ];
+    pushCandidate(points, points[0]);
   } else {
-    const detourX =
+    const targetLeftAnchor = buildAnchor(targetRect, 'left');
+    const targetRightAnchor = buildAnchor(targetRect, 'right');
+    const laneLeftX = targetRect.x - minFinalApproach;
+    const laneRightX = targetRect.x + targetRect.w + minFinalApproach;
+    const outerRightX =
       Math.max(sourceRect.x + sourceRect.w, targetRect.x + targetRect.w) +
-      18 / camera.zoomX;
-    const laneY = Math.max(
-      sourceAnchor.y + verticalOffset,
-      targetRect.y - 6 / camera.zoomY,
-    );
-    points.push({ x: sourceAnchor.x, y: laneY });
-    points.push({ x: detourX, y: laneY });
-    points.push({ x: detourX, y: targetAnchor.y });
-    points.push({ x: targetAnchor.x, y: targetAnchor.y });
+      outerPadding;
+    const outerLeftX = Math.min(sourceRect.x, targetRect.x) - outerPadding;
+
+    for (const sourceAnchor of buildSourceAnchors(sourceTask, sourceRect, camera)) {
+      pushCandidate([
+        sourceAnchor,
+        { x: laneLeftX, y: sourceAnchor.y },
+        { x: laneLeftX, y: targetLeftAnchor.y },
+        targetLeftAnchor,
+      ], sourceAnchor);
+      pushCandidate([
+        sourceAnchor,
+        { x: outerLeftX, y: sourceAnchor.y },
+        { x: outerLeftX, y: targetLeftAnchor.y },
+        targetLeftAnchor,
+      ], sourceAnchor);
+      pushCandidate([
+        sourceAnchor,
+        { x: laneRightX, y: sourceAnchor.y },
+        { x: laneRightX, y: targetRightAnchor.y },
+        targetRightAnchor,
+      ], sourceAnchor);
+      pushCandidate([
+        sourceAnchor,
+        { x: outerRightX, y: sourceAnchor.y },
+        { x: outerRightX, y: targetRightAnchor.y },
+        targetRightAnchor,
+      ], sourceAnchor);
+    }
   }
 
-  const segments = buildRoundedSegments(
-    points.concat(targetAnchor),
-    cornerRadius,
-  );
+  let bestCandidate: {
+    points: Point[];
+    overlayPenalty: number;
+    finalDirectionScore: number;
+    finalApproachPenalty: number;
+    firstDirectionScore: number;
+    firstExitPenalty: number;
+    turnCount: number;
+    length: number;
+    sourceOffsetScore: number;
+  } | null = null;
+  for (const candidate of candidates) {
+    if (
+      !bestCandidate ||
+      candidate.overlayPenalty < bestCandidate.overlayPenalty ||
+      (candidate.overlayPenalty === bestCandidate.overlayPenalty &&
+        candidate.finalDirectionScore < bestCandidate.finalDirectionScore) ||
+      (candidate.overlayPenalty === bestCandidate.overlayPenalty &&
+        candidate.finalDirectionScore === bestCandidate.finalDirectionScore &&
+        candidate.finalApproachPenalty < bestCandidate.finalApproachPenalty) ||
+      (candidate.overlayPenalty === bestCandidate.overlayPenalty &&
+        candidate.finalDirectionScore === bestCandidate.finalDirectionScore &&
+        candidate.finalApproachPenalty === bestCandidate.finalApproachPenalty &&
+        candidate.firstDirectionScore < bestCandidate.firstDirectionScore) ||
+      (candidate.overlayPenalty === bestCandidate.overlayPenalty &&
+        candidate.finalDirectionScore === bestCandidate.finalDirectionScore &&
+        candidate.finalApproachPenalty === bestCandidate.finalApproachPenalty &&
+        candidate.firstDirectionScore === bestCandidate.firstDirectionScore &&
+        candidate.firstExitPenalty < bestCandidate.firstExitPenalty) ||
+      (candidate.overlayPenalty === bestCandidate.overlayPenalty &&
+        candidate.finalDirectionScore === bestCandidate.finalDirectionScore &&
+        candidate.finalApproachPenalty === bestCandidate.finalApproachPenalty &&
+        candidate.firstDirectionScore === bestCandidate.firstDirectionScore &&
+        candidate.firstExitPenalty === bestCandidate.firstExitPenalty &&
+        candidate.turnCount < bestCandidate.turnCount) ||
+      (candidate.overlayPenalty === bestCandidate.overlayPenalty &&
+        candidate.finalDirectionScore === bestCandidate.finalDirectionScore &&
+        candidate.finalApproachPenalty === bestCandidate.finalApproachPenalty &&
+        candidate.firstDirectionScore === bestCandidate.firstDirectionScore &&
+        candidate.firstExitPenalty === bestCandidate.firstExitPenalty &&
+        candidate.turnCount === bestCandidate.turnCount &&
+        candidate.length < bestCandidate.length) ||
+      (candidate.overlayPenalty === bestCandidate.overlayPenalty &&
+        candidate.finalDirectionScore === bestCandidate.finalDirectionScore &&
+        candidate.finalApproachPenalty === bestCandidate.finalApproachPenalty &&
+        candidate.firstDirectionScore === bestCandidate.firstDirectionScore &&
+        candidate.firstExitPenalty === bestCandidate.firstExitPenalty &&
+        candidate.turnCount === bestCandidate.turnCount &&
+        candidate.length === bestCandidate.length &&
+        candidate.sourceOffsetScore < bestCandidate.sourceOffsetScore)
+    ) {
+      bestCandidate = candidate;
+    }
+  }
+
+  const points = bestCandidate?.points ?? [];
+  const targetAnchor = points[points.length - 1] as Point;
+
+  const segments = buildRoundedSegments(points, cornerRadius);
   if (segments.length === 0) {
     return [];
   }
@@ -1710,6 +2151,7 @@ export function buildFrame(
   for (let row = rowRange.start; row <= rowRange.end; row += 1) {
     const rowY = rowToWorldY(row, config.rowPitch);
     const [r, g, b, a] = rowFillColor(row, display.rows);
+    let rowBackdropColor = compositeColor(display.canvasBackground, [r, g, b, a]);
     backgroundSolids.appendRect(
       window.start,
       rowY,
@@ -1724,6 +2166,7 @@ export function buildFrame(
     );
     if (showEditAffordances && dropTargetRowIndices.has(row)) {
       const highlight = mixColor([r, g, b, a], [0.4, 0.74, 0.96, 0.22], 0.6);
+      rowBackdropColor = compositeColor(rowBackdropColor, highlight);
       backgroundSolids.appendRect(
         window.start,
         rowY,
@@ -1801,8 +2244,15 @@ export function buildFrame(
             config.milestoneSize * (selected ? 1.15 : hovered ? 1.05 : 1) * 2.4,
           )
         : null;
+      const taskSurfaceColor = compositeColor(rowBackdropColor, fill);
 
       if (task.milestone) {
+        appendMilestonePrimitive(
+          foregroundSolids,
+          milestoneRect!,
+          [rowBackdropColor[0], rowBackdropColor[1], rowBackdropColor[2], 1],
+          0,
+        );
         appendMilestonePrimitive(
           foregroundSolids,
           milestoneRect!,
@@ -1810,6 +2260,19 @@ export function buildFrame(
           emphasis,
         );
       } else {
+        foregroundSolids.appendRect(
+          taskRect.x,
+          taskRect.y,
+          taskRect.w,
+          taskRect.h,
+          rowBackdropColor[0],
+          rowBackdropColor[1],
+          rowBackdropColor[2],
+          1,
+          0,
+          0,
+          display.tasks.barRadiusPx,
+        );
         foregroundSolids.appendRect(
           taskRect.x,
           taskRect.y,
@@ -1881,14 +2344,18 @@ export function buildFrame(
           const labelX = clamp(centeredLabelX, minLabelX, maxLabelX);
           appendLabelWithShadow(
             glyphs,
+            foregroundSolids,
             layout,
+            camera,
             task.label,
             labelX,
             baseline,
             labelTier.fontPx,
             labelColor,
             labelShadowColor,
+            taskSurfaceColor,
             fullLabelWidth,
+            'none',
           );
         } else {
           const labelX = screenX + screenW + config.labelPadding;
@@ -1904,14 +2371,18 @@ export function buildFrame(
           if (label.length > 0) {
             appendLabelWithShadow(
               glyphs,
+              foregroundSolids,
               layout,
+              camera,
               label,
               labelX,
               baseline,
               labelTier.fontPx,
               labelColor,
               labelShadowColor,
+              rowBackdropColor,
               camera.viewportWidth - labelX - config.labelPadding,
+              'run',
             );
           }
         }

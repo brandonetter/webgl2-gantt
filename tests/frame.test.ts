@@ -457,6 +457,303 @@ describe('frame assembly', () => {
     expect(frame.dependencyPaths.map((path) => path.id).sort()).toEqual(['a->c', 'b->c']);
   });
 
+  it('routes same-row dependencies as a direct edge-to-edge line', () => {
+    const atlas = makeTestAtlas();
+    const layout = new TextLayoutEngine(atlas);
+    const scene = {
+      rowLabels: ['Row 1'],
+      timelineStart: 0,
+      timelineEnd: 100,
+      tasks: [
+        { id: 'a', rowIndex: 0, start: 10, end: 30, label: 'Source' },
+        { id: 'b', rowIndex: 0, start: 40, end: 60, label: 'Target', dependencies: ['a'] },
+      ],
+    };
+    const index = buildTaskIndex(scene.tasks);
+    const frame = buildFrame(
+      scene,
+      index,
+      { ...createCamera(800, 240), zoomX: 2, zoomY: 1, scrollX: 0, scrollY: 0 },
+      atlas,
+      layout,
+      {
+        selectedTaskId: null,
+        hoveredTaskId: null,
+        selectedDependencyId: null,
+        hoveredDependencyId: null,
+      },
+      {
+        rowPitch: 30,
+        barHeight: 16,
+        milestoneSize: 12,
+        rowPadding: 7,
+        labelPadding: 8,
+        gridPadding: 0,
+        overscanRows: 1,
+        overscanPx: 80,
+        renderSelectedDependencies: true,
+      },
+      {},
+      {
+        ...DEFAULT_DISPLAY_OPTIONS,
+        dependencies: {
+          ...DEFAULT_DISPLAY_OPTIONS.dependencies,
+          showArrowheads: false,
+        },
+      },
+    );
+
+    expect(frame.dependencyPaths[0]?.segments.length).toBe(1);
+    expect(frame.dependencyPaths[0]?.segments[0]?.x1).toBeCloseTo(30);
+    expect(frame.dependencyPaths[0]?.segments[0]?.x2).toBeCloseTo(40);
+  });
+
+  it('can start a cross-row dependency on a day marker along the source centerline', () => {
+    const atlas = makeTestAtlas();
+    const layout = new TextLayoutEngine(atlas);
+    const scene = {
+      rowLabels: ['Row 1', 'Row 2'],
+      timelineStart: 0,
+      timelineEnd: 160,
+      tasks: [
+        { id: 'a', rowIndex: 0, start: 0, end: 100, label: 'Wide source' },
+        { id: 'b', rowIndex: 1, start: 20, end: 40, label: 'Target', dependencies: ['a'] },
+      ],
+    };
+    const index = buildTaskIndex(scene.tasks);
+    const frame = buildFrame(
+      scene,
+      index,
+      { ...createCamera(800, 240), zoomX: 2, zoomY: 1, scrollX: 0, scrollY: 0 },
+      atlas,
+      layout,
+      {
+        selectedTaskId: null,
+        hoveredTaskId: null,
+        selectedDependencyId: null,
+        hoveredDependencyId: null,
+      },
+      {
+        rowPitch: 30,
+        barHeight: 16,
+        milestoneSize: 12,
+        rowPadding: 7,
+        labelPadding: 8,
+        gridPadding: 0,
+        overscanRows: 1,
+        overscanPx: 80,
+        renderSelectedDependencies: true,
+      },
+      {},
+      {
+        ...DEFAULT_DISPLAY_OPTIONS,
+        dependencies: {
+          ...DEFAULT_DISPLAY_OPTIONS.dependencies,
+          showArrowheads: false,
+        },
+      },
+    );
+
+    const firstSegment = frame.dependencyPaths[0]?.segments[0];
+    expect(firstSegment).toBeDefined();
+    expect(Math.round(firstSegment?.x1 ?? 0)).toBeCloseTo(firstSegment?.x1 ?? 0);
+    expect(firstSegment?.y1).toBeCloseTo(15);
+  });
+
+  it('prefers a route whose final segment points right when multiple cross-row options exist', () => {
+    const atlas = makeTestAtlas();
+    const layout = new TextLayoutEngine(atlas);
+    const scene = {
+      rowLabels: ['Row 1', 'Row 2'],
+      timelineStart: 0,
+      timelineEnd: 120,
+      tasks: [
+        { id: 'a', rowIndex: 0, start: 60, end: 80, label: 'Source' },
+        { id: 'b', rowIndex: 1, start: 20, end: 40, label: 'Target', dependencies: ['a'] },
+      ],
+    };
+    const index = buildTaskIndex(scene.tasks);
+    const frame = buildFrame(
+      scene,
+      index,
+      { ...createCamera(800, 240), zoomX: 2, zoomY: 1, scrollX: 0, scrollY: 0 },
+      atlas,
+      layout,
+      {
+        selectedTaskId: null,
+        hoveredTaskId: null,
+        selectedDependencyId: null,
+        hoveredDependencyId: null,
+      },
+      {
+        rowPitch: 30,
+        barHeight: 16,
+        milestoneSize: 12,
+        rowPadding: 7,
+        labelPadding: 8,
+        gridPadding: 0,
+        overscanRows: 1,
+        overscanPx: 80,
+        renderSelectedDependencies: true,
+      },
+      {},
+      {
+        ...DEFAULT_DISPLAY_OPTIONS,
+        dependencies: {
+          ...DEFAULT_DISPLAY_OPTIONS.dependencies,
+          showArrowheads: false,
+        },
+      },
+    );
+
+    const lastSegment = frame.dependencyPaths[0]?.segments.at(-1);
+    expect(lastSegment?.x2).toBeGreaterThan(
+      lastSegment?.x1 ?? 0,
+    );
+  });
+
+  it('prefers a visible left-to-right shape when the target sits directly below the source', () => {
+    const atlas = makeTestAtlas();
+    const layout = new TextLayoutEngine(atlas);
+    const scene = {
+      rowLabels: ['Row 1', 'Row 2'],
+      timelineStart: 0,
+      timelineEnd: 80,
+      tasks: [
+        { id: 'a', rowIndex: 0, start: 0, end: 40, label: 'Source' },
+        { id: 'b', rowIndex: 1, start: 10, end: 30, label: 'Target', dependencies: ['a'] },
+      ],
+    };
+    const index = buildTaskIndex(scene.tasks);
+    const frame = buildFrame(
+      scene,
+      index,
+      { ...createCamera(800, 240), zoomX: 2, zoomY: 1, scrollX: 0, scrollY: 0 },
+      atlas,
+      layout,
+      {
+        selectedTaskId: null,
+        hoveredTaskId: null,
+        selectedDependencyId: null,
+        hoveredDependencyId: null,
+      },
+      {
+        rowPitch: 30,
+        barHeight: 16,
+        milestoneSize: 12,
+        rowPadding: 7,
+        labelPadding: 8,
+        gridPadding: 0,
+        overscanRows: 1,
+        overscanPx: 80,
+        renderSelectedDependencies: true,
+      },
+      {},
+      {
+        ...DEFAULT_DISPLAY_OPTIONS,
+        dependencies: {
+          ...DEFAULT_DISPLAY_OPTIONS.dependencies,
+          showArrowheads: false,
+        },
+      },
+    );
+
+    const path = frame.dependencyPaths[0];
+    expect(path?.segments.length).toBeGreaterThanOrEqual(3);
+    expect(path?.segments[0]?.y1).toBeCloseTo(15);
+    expect(path?.segments[0]?.y2).toBeCloseTo(path?.segments[0]?.y1 ?? 0);
+    expect(path?.segments[0]?.x2).toBeGreaterThan(path?.segments[0]?.x1 ?? 0);
+    expect(path?.segments.at(-1)?.y2).toBeCloseTo(path?.segments.at(-1)?.y1 ?? 0);
+    expect(path?.segments.at(-1)?.x2).toBeGreaterThan(path?.segments.at(-1)?.x1 ?? 0);
+  });
+
+  it('keeps the directly-below routing topology stable across zoom levels', () => {
+    const atlas = makeTestAtlas();
+    const layout = new TextLayoutEngine(atlas);
+    const scene = {
+      rowLabels: ['Row 1', 'Row 2'],
+      timelineStart: 0,
+      timelineEnd: 80,
+      tasks: [
+        { id: 'a', rowIndex: 0, start: 0, end: 40, label: 'Source' },
+        { id: 'b', rowIndex: 1, start: 10, end: 30, label: 'Target', dependencies: ['a'] },
+      ],
+    };
+    const index = buildTaskIndex(scene.tasks);
+    const renderState = {
+      selectedTaskId: null,
+      hoveredTaskId: null,
+      selectedDependencyId: null,
+      hoveredDependencyId: null,
+    };
+    const display = {
+      ...DEFAULT_DISPLAY_OPTIONS,
+      dependencies: {
+        ...DEFAULT_DISPLAY_OPTIONS.dependencies,
+        showArrowheads: false,
+      },
+    };
+
+    const zoomedOutFrame = buildFrame(
+      scene,
+      index,
+      { ...createCamera(800, 240), zoomX: 0.4, zoomY: 1, scrollX: 0, scrollY: 0 },
+      atlas,
+      layout,
+      renderState,
+      {
+        rowPitch: 30,
+        barHeight: 16,
+        milestoneSize: 12,
+        rowPadding: 7,
+        labelPadding: 8,
+        gridPadding: 0,
+        overscanRows: 1,
+        overscanPx: 80,
+        renderSelectedDependencies: true,
+      },
+      {},
+      display,
+    );
+
+    const zoomedInFrame = buildFrame(
+      scene,
+      index,
+      { ...createCamera(800, 240), zoomX: 20, zoomY: 1, scrollX: 0, scrollY: 0 },
+      atlas,
+      layout,
+      renderState,
+      {
+        rowPitch: 30,
+        barHeight: 16,
+        milestoneSize: 12,
+        rowPadding: 7,
+        labelPadding: 8,
+        gridPadding: 0,
+        overscanRows: 1,
+        overscanPx: 80,
+        renderSelectedDependencies: true,
+      },
+      {},
+      display,
+    );
+
+    expect(zoomedOutFrame.dependencyPaths[0]?.segments.length).toBe(
+      zoomedInFrame.dependencyPaths[0]?.segments.length,
+    );
+
+    const zoomedOutSegments = zoomedOutFrame.dependencyPaths[0]?.segments ?? [];
+    const zoomedInSegments = zoomedInFrame.dependencyPaths[0]?.segments ?? [];
+    const pathMinX = (segments: typeof zoomedOutSegments): number =>
+      Math.min(...segments.flatMap((segment) => [segment.x1, segment.x2]));
+    const pathMaxX = (segments: typeof zoomedOutSegments): number =>
+      Math.max(...segments.flatMap((segment) => [segment.x1, segment.x2]));
+
+    expect(zoomedOutSegments[0]?.x1).toBeCloseTo(zoomedInSegments[0]?.x1 ?? 0);
+    expect(pathMinX(zoomedOutSegments)).toBeCloseTo(pathMinX(zoomedInSegments));
+    expect(pathMaxX(zoomedOutSegments)).toBeCloseTo(pathMaxX(zoomedInSegments));
+  });
+
   it('renders one-day tasks at their true width and keeps picking aligned', () => {
     const atlas = makeTestAtlas();
     const layout = new TextLayoutEngine(atlas);
@@ -503,7 +800,7 @@ describe('frame assembly', () => {
       },
     );
 
-    expect(frame.dependencyPaths[0]?.segments[0]?.x1).toBeCloseTo(3.5);
+    expect(frame.dependencyPaths[0]?.segments[0]?.x1).toBeCloseTo(4);
 
     const pickedNearRightEdge = pickTaskAtPoint(scene, index, camera, 399, 15, {
       rowPitch: 30,
@@ -608,7 +905,219 @@ describe('frame assembly', () => {
     expect(frame.glyphs.view()[labelGlyphOffset + 9]).toBeCloseTo(0.2);
     expect(frame.glyphs.view()[labelGlyphOffset + 10]).toBeCloseTo(0.25);
     expect(frame.dependencyLines.view()[8]).toBeCloseTo(3);
-    expect(frame.dependencyPaths[0]?.segments.length).toBeLessThan(8);
+    expect(frame.dependencyPaths[0]?.segments.length).toBeLessThan(14);
+  });
+
+  it('adds opaque task occluders before translucent task fills', () => {
+    const atlas = makeTestAtlas();
+    const layout = new TextLayoutEngine(atlas);
+    const scene = {
+      rowLabels: ['Row 1', 'Row 2'],
+      timelineStart: 0,
+      timelineEnd: 100,
+      tasks: [
+        { id: 'a', rowIndex: 0, start: 10, end: 40, label: 'Task A' },
+        { id: 'b', rowIndex: 1, start: 50, end: 70, label: 'Task B', dependencies: ['a'] },
+      ],
+    };
+    const index = buildTaskIndex(scene.tasks);
+    const frame = buildFrame(
+      scene,
+      index,
+      { ...createCamera(800, 280), zoomX: 2, zoomY: 1, scrollX: 0, scrollY: 0 },
+      atlas,
+      layout,
+      {
+        selectedTaskId: null,
+        hoveredTaskId: null,
+        selectedDependencyId: null,
+        hoveredDependencyId: null,
+      },
+      {
+        rowPitch: 30,
+        barHeight: 16,
+        milestoneSize: 12,
+        headerHeight: 40,
+      },
+    );
+
+    const solids = frame.foregroundSolids.view();
+    const hasSolid = (
+      x: number,
+      y: number,
+      w: number,
+      h: number,
+      alpha: (value: number) => boolean,
+    ): boolean => {
+      for (let i = 0; i < frame.foregroundSolids.count; i += 1) {
+        const offset = i * 12;
+        if (
+          Math.abs(solids[offset + 0] - x) < 0.001 &&
+          Math.abs(solids[offset + 1] - y) < 0.001 &&
+          Math.abs(solids[offset + 2] - w) < 0.001 &&
+          Math.abs(solids[offset + 3] - h) < 0.001 &&
+          alpha(solids[offset + 7])
+        ) {
+          return true;
+        }
+      }
+
+      return false;
+    };
+
+    expect(frame.foregroundSolids.count).toBeGreaterThanOrEqual(6);
+    expect(hasSolid(10, 7, 30, 16, (value) => Math.abs(value - 1) < 0.001)).toBe(true);
+    expect(hasSolid(10, 7, 30, 16, (value) => value < 1)).toBe(true);
+    expect(hasSolid(50, 37, 20, 16, (value) => Math.abs(value - 1) < 0.001)).toBe(true);
+    expect(hasSolid(50, 37, 20, 16, (value) => value < 1)).toBe(true);
+  });
+
+  it('does not add a separate label occluder for labels rendered inside the task bar', () => {
+    const atlas = makeTestAtlas();
+    const layout = new TextLayoutEngine(atlas);
+    const scene = {
+      rowLabels: ['Row 1'],
+      timelineStart: 0,
+      timelineEnd: 120,
+      tasks: [
+        { id: 'a', rowIndex: 0, start: 10, end: 80, label: 'Task Label' },
+      ],
+    };
+    const index = buildTaskIndex(scene.tasks);
+    const frame = buildFrame(
+      scene,
+      index,
+      { ...createCamera(800, 240), zoomX: 2, zoomY: 1, scrollX: 0, scrollY: 0 },
+      atlas,
+      layout,
+      {
+        selectedTaskId: null,
+        hoveredTaskId: null,
+        selectedDependencyId: null,
+        hoveredDependencyId: null,
+      },
+      {
+        rowPitch: 30,
+        barHeight: 16,
+        milestoneSize: 12,
+        rowPadding: 7,
+        labelPadding: 8,
+        gridPadding: 0,
+        overscanRows: 1,
+        overscanPx: 80,
+        renderSelectedDependencies: true,
+      },
+    );
+
+    const solids = frame.foregroundSolids.view();
+    let foundInnerLabelSolid = false;
+    for (let i = 0; i < frame.foregroundSolids.count; i += 1) {
+      const offset = i * 12;
+      const x = solids[offset + 0];
+      const y = solids[offset + 1];
+      const w = solids[offset + 2];
+      const h = solids[offset + 3];
+      const a = solids[offset + 7];
+      if (
+        x > 10 &&
+        x + w < 80 &&
+        y >= 6.5 &&
+        y + h <= 24 &&
+        w < 70 &&
+        h < 18 &&
+        Math.abs(a - 1) < 0.001
+      ) {
+        foundInnerLabelSolid = true;
+        break;
+      }
+    }
+
+    expect(foundInnerLabelSolid).toBe(false);
+  });
+
+  it('uses a run-width label occluder for labels rendered outside the task bar', () => {
+    const atlas = makeTestAtlas();
+    const layout = new TextLayoutEngine(atlas);
+    const scene = {
+      rowLabels: ['Row 1'],
+      timelineStart: 0,
+      timelineEnd: 120,
+      tasks: [
+        { id: 'a', rowIndex: 0, start: 10, end: 15, label: 'Long Label' },
+      ],
+    };
+    const index = buildTaskIndex(scene.tasks);
+    const frame = buildFrame(
+      scene,
+      index,
+      { ...createCamera(800, 240), zoomX: 2, zoomY: 1, scrollX: 0, scrollY: 0 },
+      atlas,
+      layout,
+      {
+        selectedTaskId: null,
+        hoveredTaskId: null,
+        selectedDependencyId: null,
+        hoveredDependencyId: null,
+      },
+      {
+        rowPitch: 30,
+        barHeight: 16,
+        milestoneSize: 12,
+        rowPadding: 7,
+        labelPadding: 8,
+        gridPadding: 0,
+        overscanRows: 1,
+        overscanPx: 80,
+        renderSelectedDependencies: true,
+      },
+    );
+
+    const composite = (
+      under: [number, number, number, number],
+      over: [number, number, number, number],
+    ): [number, number, number, number] => {
+      const outAlpha = over[3] + under[3] * (1 - over[3]);
+      return [
+        (over[0] * over[3] + under[0] * under[3] * (1 - over[3])) / outAlpha,
+        (over[1] * over[3] + under[1] * under[3] * (1 - over[3])) / outAlpha,
+        (over[2] * over[3] + under[2] * under[3] * (1 - over[3])) / outAlpha,
+        outAlpha,
+      ];
+    };
+    const rowBackdrop = composite(
+      DEFAULT_DISPLAY_OPTIONS.canvasBackground,
+      DEFAULT_DISPLAY_OPTIONS.rows.evenFill,
+    );
+
+    const solids = frame.foregroundSolids.view();
+    let labelOccluderOffset = -1;
+    for (let i = 0; i < frame.foregroundSolids.count; i += 1) {
+      const offset = i * 12;
+      const x = solids[offset + 0];
+      const y = solids[offset + 1];
+      const w = solids[offset + 2];
+      const h = solids[offset + 3];
+      const a = solids[offset + 7];
+      if (
+        x > 15 &&
+        y >= 6 &&
+        y + h <= 24.5 &&
+        w > 30 &&
+        h > 10 &&
+        Math.abs(a - 1) < 0.001
+      ) {
+        labelOccluderOffset = offset;
+        break;
+      }
+    }
+
+    expect(labelOccluderOffset).toBeGreaterThanOrEqual(0);
+    expect(solids[labelOccluderOffset + 10]).toBeCloseTo(0);
+    expect(solids[labelOccluderOffset + 11]).toBeCloseTo(0);
+    expect(solids[labelOccluderOffset + 4]).toBeCloseTo(rowBackdrop[0], 3);
+    expect(solids[labelOccluderOffset + 5]).toBeCloseTo(rowBackdrop[1], 3);
+    expect(solids[labelOccluderOffset + 6]).toBeCloseTo(rowBackdrop[2], 3);
+    expect(solids[labelOccluderOffset + 7]).toBeCloseTo(1);
   });
 
   it('fades task label glyph alpha under the header and keeps fully above labels dimmed', () => {

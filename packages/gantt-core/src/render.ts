@@ -47,6 +47,7 @@ void main() {
   float kind = vParams.x;
   float emphasis = vParams.y;
   float radiusPx = vParams.z;
+  float edgeTintStrength = vParams.w;
   float alpha = vColor.a;
 
   if (kind > 0.5) {
@@ -70,7 +71,7 @@ void main() {
 
   float edge = min(min(vLocal.x, vLocal.y), min(1.0 - vLocal.x, 1.0 - vLocal.y));
   float stroke = smoothstep(0.0, 0.06, edge);
-  vec3 fill = mix(vColor.rgb * 0.88, vColor.rgb, stroke);
+  vec3 fill = mix(vColor.rgb * (1.0 - 0.12 * edgeTintStrength), vColor.rgb, stroke);
 
   if (emphasis > 0.0) {
     fill = mix(fill, vec3(1.0), 0.12 * emphasis);
