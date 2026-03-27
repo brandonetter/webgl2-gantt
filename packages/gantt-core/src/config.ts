@@ -2,9 +2,9 @@ import {
   DEFAULT_DISPLAY_OPTIONS,
   type FrameOptions,
   type GanttColor,
-  type GanttColorInput,
   type GanttDisplayConfig,
   type NormalizedGanttDisplayConfig,
+  normalizeColorInput,
 } from './core';
 import { createSampleScene } from './data';
 import type {
@@ -115,89 +115,6 @@ function cloneColor(color: GanttColor): GanttColor {
 
 function clonePalette(palette: GanttColor[]): GanttColor[] {
   return palette.map((color) => cloneColor(color));
-}
-
-function normalizeRgbComponent(value: number): number {
-  return value > 1 ? value / 255 : value;
-}
-
-function normalizeAlphaComponent(value: number): number {
-  return value > 1 ? value / 255 : value;
-}
-
-function clampColorComponent(value: number): number {
-  return Math.max(0, Math.min(1, value));
-}
-
-function parseHexColor(input: string): GanttColor | null {
-  const hex = input.trim().replace(/^#/, '');
-  if (![3, 4, 6, 8].includes(hex.length)) {
-    return null;
-  }
-
-  const expanded = hex.length <= 4
-    ? hex.split('').map((char) => `${char}${char}`).join('')
-    : hex;
-  const hasAlpha = expanded.length === 8;
-  const r = Number.parseInt(expanded.slice(0, 2), 16);
-  const g = Number.parseInt(expanded.slice(2, 4), 16);
-  const b = Number.parseInt(expanded.slice(4, 6), 16);
-  const a = hasAlpha ? Number.parseInt(expanded.slice(6, 8), 16) : 255;
-
-  if ([r, g, b, a].some((value) => Number.isNaN(value))) {
-    return null;
-  }
-
-  return [r / 255, g / 255, b / 255, a / 255];
-}
-
-function parseRgbColor(input: string): GanttColor | null {
-  const match = input.trim().match(/^rgba?\((.+)\)$/i);
-  if (!match) {
-    return null;
-  }
-
-  const parts = match[1].split(',').map((part) => Number.parseFloat(part.trim()));
-  if (parts.length < 3 || parts.length > 4 || parts.some((part) => Number.isNaN(part))) {
-    return null;
-  }
-
-  return [
-    clampColorComponent(normalizeRgbComponent(parts[0])),
-    clampColorComponent(normalizeRgbComponent(parts[1])),
-    clampColorComponent(normalizeRgbComponent(parts[2])),
-    clampColorComponent(normalizeAlphaComponent(parts[3] ?? 1)),
-  ];
-}
-
-function normalizeColorInput(input: GanttColorInput | undefined, fallback: GanttColor): GanttColor {
-  if (input === undefined) {
-    return cloneColor(fallback);
-  }
-
-  if (Array.isArray(input)) {
-    if (input.length === 3) {
-      return [
-        clampColorComponent(normalizeRgbComponent(input[0])),
-        clampColorComponent(normalizeRgbComponent(input[1])),
-        clampColorComponent(normalizeRgbComponent(input[2])),
-        1,
-      ];
-    }
-
-    return [
-      clampColorComponent(normalizeRgbComponent(input[0])),
-      clampColorComponent(normalizeRgbComponent(input[1])),
-      clampColorComponent(normalizeRgbComponent(input[2])),
-      clampColorComponent(normalizeAlphaComponent(input[3])),
-    ];
-  }
-
-  const parsed = parseHexColor(input) ?? parseRgbColor(input);
-  if (!parsed) {
-    throw new Error(`Unsupported color value: ${input}`);
-  }
-  return parsed;
 }
 
 function mergeDisplayConfig(display: GanttDisplayConfig | undefined): NormalizedGanttDisplayConfig {

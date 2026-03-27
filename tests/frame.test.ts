@@ -1569,6 +1569,60 @@ describe('frame assembly', () => {
     expect(hasSolid(50, 37, 20, 16, (value) => value < 1)).toBe(true);
   });
 
+  it('uses task.fill to override the row-based bar color', () => {
+    const atlas = makeTestAtlas();
+    const layout = new TextLayoutEngine(atlas);
+    const scene = {
+      rowLabels: ['Row 1'],
+      timelineStart: 0,
+      timelineEnd: 100,
+      tasks: [
+        { id: 'a', rowIndex: 0, start: 10, end: 30, label: 'Task A', fill: '#ff4d00' },
+      ],
+    };
+    const index = buildTaskIndex(scene.tasks);
+    const frame = buildFrame(
+      scene,
+      index,
+      { ...createCamera(800, 240), zoomX: 2, zoomY: 1, scrollX: 0, scrollY: 0 },
+      atlas,
+      layout,
+      {
+        selectedTaskId: null,
+        hoveredTaskId: null,
+        selectedDependencyId: null,
+        hoveredDependencyId: null,
+      },
+      {
+        rowPitch: 30,
+        barHeight: 16,
+        milestoneSize: 12,
+        headerHeight: 40,
+      },
+    );
+
+    const solids = frame.foregroundSolids.view();
+    let fillOffset = -1;
+    for (let i = 0; i < frame.foregroundSolids.count; i += 1) {
+      const offset = i * 12;
+      if (
+        Math.abs(solids[offset + 0] - 10) < 0.001 &&
+        Math.abs(solids[offset + 1] - 7) < 0.001 &&
+        Math.abs(solids[offset + 2] - 20) < 0.001 &&
+        Math.abs(solids[offset + 3] - 16) < 0.001 &&
+        solids[offset + 7] < 1
+      ) {
+        fillOffset = offset;
+        break;
+      }
+    }
+
+    expect(fillOffset).toBeGreaterThanOrEqual(0);
+    expect(solids[fillOffset + 4]).toBeCloseTo(1, 3);
+    expect(solids[fillOffset + 5]).toBeCloseTo(77 / 255, 3);
+    expect(solids[fillOffset + 6]).toBeCloseTo(0, 3);
+  });
+
   it('does not add a separate label occluder for labels rendered inside the task bar', () => {
     const atlas = makeTestAtlas();
     const layout = new TextLayoutEngine(atlas);

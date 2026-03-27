@@ -2,9 +2,11 @@ import {
   DAY_MS,
   cloneDependencyRefs,
   getDependencyTaskId,
+  normalizeColorInput,
   type GanttDependencyObject,
   type GanttDependencyRef,
   type GanttDependencyType,
+  type GanttColor,
   type GanttScene,
   type GanttTask,
 } from './core';
@@ -119,6 +121,14 @@ function normalizeDependencies(value: unknown, label: string): GanttDependencyRe
   return dependencies.length > 0 ? dependencies : undefined;
 }
 
+function normalizeTaskFill(value: unknown, label: string): GanttColor | undefined {
+  if (value == null) {
+    return undefined;
+  }
+
+  return normalizeColorInput(value as GanttTask['fill'], [0, 0, 0, 1]);
+}
+
 function parseDateOnlyString(input: string, label: string): number {
   const match = input.match(DATE_ONLY_PATTERN);
   if (!match) {
@@ -201,6 +211,7 @@ function buildTaskFromRuntimeInput(
       label: normalizeLabel(candidate.label, `${label}.label`),
       milestone: normalizeMilestone(candidate.milestone, `${label}.milestone`),
       dependencies: normalizeDependencies(candidate.dependencies, `${label}.dependencies`),
+      fill: normalizeTaskFill(candidate.fill, `${label}.fill`),
     },
     extractTaskExtras(candidate),
   );
@@ -241,6 +252,9 @@ function buildTaskFromRuntimePatch(
   const dependencies = candidate.dependencies === undefined
     ? cloneDependencies(baseTask.dependencies)
     : normalizeDependencies(candidate.dependencies, `Task patch for '${taskId}'.dependencies`);
+  const fill = candidate.fill === undefined
+    ? baseTask.fill
+    : normalizeTaskFill(candidate.fill, `Task patch for '${taskId}'.fill`);
 
   if (end <= start) {
     throw new Error(`Task patch for '${taskId}' must leave the task with an end date on or after its start date.`);
@@ -255,6 +269,7 @@ function buildTaskFromRuntimePatch(
       label,
       milestone,
       dependencies,
+      fill,
     },
     mergeTaskExtras(baseTask, candidate),
   );
@@ -320,6 +335,7 @@ export function exportTask(task: GanttTask): GanttExportedTask {
     label: task.label,
     milestone: Boolean(task.milestone),
     dependencies: cloneDependencies(task.dependencies) ?? [],
+    fill: task.fill == null ? undefined : normalizeColorInput(task.fill, [0, 0, 0, 1]),
     startDate: normalizeExportDate(task.start),
     endDate: normalizeExportDate(task.end - 1),
     durationDays: task.end - task.start,

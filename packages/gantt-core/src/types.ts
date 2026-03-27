@@ -134,6 +134,7 @@ export type GanttExportedTask = {
   label: string;
   milestone: boolean;
   dependencies: GanttDependencyRef[];
+  fill?: GanttColor;
   startDate: string;
   endDate: string;
   durationDays: number;

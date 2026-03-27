@@ -78,6 +78,26 @@ describe('runtime task data helpers', () => {
     expect(byTimestamp.task.end).toBe(Math.floor(Date.UTC(2026, 0, 12) / (24 * 60 * 60 * 1000)) + 1);
   });
 
+  it('normalizes per-task fill overrides and allows clearing them in patches', () => {
+    const emptyScene = { rowLabels: [], timelineStart: 0, timelineEnd: 0, tasks: [] };
+    const added = addTask(emptyScene, {
+      id: 'colored-task',
+      rowIndex: 0,
+      start: '2026-01-10',
+      end: '2026-01-12',
+      label: 'Colored Task',
+      fill: '#336699cc',
+    });
+
+    expect(added.task.fill).toEqual([0.2, 0.4, 0.6, 0.8]);
+    expect(exportTasks(added.scene)[0]?.fill).toEqual([0.2, 0.4, 0.6, 0.8]);
+
+    const cleared = updateTask(added.scene, 'colored-task', { fill: null });
+
+    expect(cleared.task.fill).toBeUndefined();
+    expect(exportTasks(cleared.scene)[0]?.fill).toBeUndefined();
+  });
+
   it('updates tasks as patches while preserving untouched fields', () => {
     const scene = makeScene();
 

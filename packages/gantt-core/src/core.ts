@@ -9,6 +9,7 @@ export type GanttTask = {
   label: string;
   milestone?: boolean;
   dependencies?: GanttDependencyRef[];
+  fill?: GanttColorInput | null;
 } & Record<string, unknown>;
 
 export type GanttDependencyType = 'FS' | 'FF' | 'SF' | 'SS';
@@ -284,6 +285,97 @@ const DEFAULT_OPTIONS: FrameOptions = {
 };
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
+
+function cloneColor(color: GanttColor): GanttColor {
+  return [color[0], color[1], color[2], color[3]];
+}
+
+function normalizeRgbComponent(value: number): number {
+  return value > 1 ? value / 255 : value;
+}
+
+function normalizeAlphaComponent(value: number): number {
+  return value > 1 ? value / 255 : value;
+}
+
+function clampColorComponent(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function parseHexColor(input: string): GanttColor | null {
+  const hex = input.trim().replace(/^#/, '');
+  if (![3, 4, 6, 8].includes(hex.length)) {
+    return null;
+  }
+
+  const expanded = hex.length <= 4
+    ? hex.split('').map((char) => `${char}${char}`).join('')
+    : hex;
+  const hasAlpha = expanded.length === 8;
+  const r = Number.parseInt(expanded.slice(0, 2), 16);
+  const g = Number.parseInt(expanded.slice(2, 4), 16);
+  const b = Number.parseInt(expanded.slice(4, 6), 16);
+  const a = hasAlpha ? Number.parseInt(expanded.slice(6, 8), 16) : 255;
+
+  if ([r, g, b, a].some((value) => Number.isNaN(value))) {
+    return null;
+  }
+
+  return [r / 255, g / 255, b / 255, a / 255];
+}
+
+function parseRgbColor(input: string): GanttColor | null {
+  const match = input.trim().match(/^rgba?\((.+)\)$/i);
+  if (!match) {
+    return null;
+  }
+
+  const parts = match[1].split(',').map((part) => Number.parseFloat(part.trim()));
+  if (parts.length < 3 || parts.length > 4 || parts.some((part) => Number.isNaN(part))) {
+    return null;
+  }
+
+  return [
+    clampColorComponent(normalizeRgbComponent(parts[0])),
+    clampColorComponent(normalizeRgbComponent(parts[1])),
+    clampColorComponent(normalizeRgbComponent(parts[2])),
+    clampColorComponent(normalizeAlphaComponent(parts[3] ?? 1)),
+  ];
+}
+
+export function normalizeColorInput(
+  input: GanttColorInput | null | undefined,
+  fallback: GanttColor,
+): GanttColor {
+  if (input == null) {
+    return cloneColor(fallback);
+  }
+
+  if (Array.isArray(input)) {
+    if (input.length === 3) {
+      return [
+        clampColorComponent(normalizeRgbComponent(input[0])),
+        clampColorComponent(normalizeRgbComponent(input[1])),
+        clampColorComponent(normalizeRgbComponent(input[2])),
+        1,
+      ];
+    }
+
+    return [
+      clampColorComponent(normalizeRgbComponent(input[0])),
+      clampColorComponent(normalizeRgbComponent(input[1])),
+      clampColorComponent(normalizeRgbComponent(input[2])),
+      clampColorComponent(normalizeAlphaComponent(input[3])),
+    ];
+  }
+
+  const parsed = parseHexColor(input) ?? parseRgbColor(input);
+  if (!parsed) {
+    throw new Error(`Unsupported color value: ${input}`);
+  }
+
+  return parsed;
+}
 
 export function isTypedDependencyRef(dependency: GanttDependencyRef): dependency is GanttDependencyObject {
   return typeof dependency === 'object' && dependency !== null;
@@ -1004,6 +1096,21 @@ function rowFillColor(
   return rowIndex % 2 === 0 ? display.evenFill : display.oddFill;
 }
 
+function fillColorForTask(
+  task: GanttTask,
+  display: NormalizedGanttDisplayConfig['tasks'],
+): GanttColor {
+  const fallback = paletteForRow(task.rowIndex, display);
+  try {
+    return normalizeColorInput(task.fill, fallback);
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`Invalid fill for task '${task.id}': ${error.message}`);
+    }
+    throw error;
+  }
+}
+
 function appendLabelWithShadow(
   glyphs: GlyphInstanceWriter,
   solids: SolidInstanceWriter,
@@ -1136,7 +1243,7 @@ function taskFillColor(
   hoveredTaskId: string | null,
   display: NormalizedGanttDisplayConfig['tasks'],
 ): GanttColor {
-  const [r, g, b, a] = paletteForRow(task.rowIndex, display);
+  const [r, g, b, a] = fillColorForTask(task, display);
   const selected = selectedTaskIds.has(task.id);
   const hovered = task.id === hoveredTaskId;
   const boost = selected ? display.selectedBoost : hovered ? display.hoveredBoost : 1;

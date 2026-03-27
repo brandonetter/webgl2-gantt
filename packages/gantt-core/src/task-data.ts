@@ -8,6 +8,7 @@ const TASK_RESERVED_FIELDS = new Set([
   'label',
   'milestone',
   'dependencies',
+  'fill',
 ]);
 
 type TaskRecord = Record<string, unknown>;
@@ -92,6 +93,7 @@ export function withTaskExtras(
     label: string;
     milestone?: boolean;
     dependencies?: GanttDependencyRef[];
+    fill?: GanttTask['fill'];
   },
   extras: TaskRecord,
 ): GanttTask {
@@ -104,5 +106,6 @@ export function withTaskExtras(
     label: reserved.label,
     milestone: reserved.milestone,
     dependencies: reserved.dependencies ? cloneStructuredValue(reserved.dependencies) : undefined,
+    fill: reserved.fill == null ? undefined : cloneStructuredValue(reserved.fill),
   };
 }
